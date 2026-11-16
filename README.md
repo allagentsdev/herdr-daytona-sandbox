@@ -4,10 +4,11 @@ Run Claude Code, Codex, OpenCode, or Pi in a persistent Daytona Linux sandbox
 from a Herdr pane. Upload a filtered snapshot of a Git worktree, reconnect to its
 saved workspace, then review and explicitly approve remote changes locally.
 
-**Implementation under verification.** Local checks and real Linux Daytona
-provisioning, reconnect, persistence and patch checks are recorded in
-[verification](docs/verification.md). Authenticated agent work and the remaining
-agent/platform matrix are open; this is not yet a verified cloud release.
+**Implementation under verification.** All four pinned agents completed
+authenticated coding tasks in real Linux Daytona sandboxes. Local checks, live
+lifecycle results and remaining platform checks are recorded in
+[verification](docs/verification.md). See the [Vercel workflow comparison](docs/vercel-parity.md)
+for supported actions and deliberate provider/security differences.
 
 ## Install
 
@@ -44,7 +45,13 @@ your normal configuration and panes.
 
 Provide `DAYTONA_API_KEY` in the environment of the Herdr server that launches
 plugin actions. Alternatively provide both `DAYTONA_JWT_TOKEN` and
-`DAYTONA_ORGANIZATION_ID`. Configuration can reference other host variable names;
+`DAYTONA_ORGANIZATION_ID`, or invoke **Connect Daytona account** to enter a key in
+a masked local popup. The connection action checks the key with a read-only
+request before saving it in the private plugin configuration directory, bound
+to the configured API endpoint. It never creates a sandbox. Start opens this
+setup popup when credentials are missing; finish setup and invoke Start again.
+Explicit API-key environment authentication takes precedence, then complete JWT
+authentication, then the saved key. Configuration can reference other host variable names;
 it never contains their secret values. Restart only a session you own when
 changing its inherited environment. A Daytona CLI login profile does not
 automatically authenticate the SDK.
@@ -78,29 +85,31 @@ its API-key login within that remote terminal. Never put secrets in `agentArgs`.
 The SDK runs from a private plugin state directory with explicit credentials,
 endpoint, and region, avoiding repository-controlled `.env` files.
 
-| Field                  | Default                      | Meaning                                                                              |
-| ---------------------- | ---------------------------- | ------------------------------------------------------------------------------------ |
-| `agent`                | `codex`                      | `codex`, `claude-code`, `opencode`, or `pi`                                          |
-| `agentArgs`            | `[]`                         | Literal argv array; values are shell quoted individually                             |
-| `region`               | `eu`                         | Explicit Daytona target; no automatic region fallback                                |
-| `image`                | `node:22.22.0-bookworm`      | Linux image with Bash, Git, Node 22+, npm, root installation access                  |
-| `snapshot`             | `null`                       | Existing Daytona snapshot; when supplied without `image`, replaces the default image |
-| `remoteRoot`           | `/workspace`                 | Normalized `/workspace` or a path beneath it                                         |
-| `excludedPaths`        | `[]`                         | Additional literal repository-relative files/directories; no globs                   |
-| `maxFiles`             | `10000`                      | Maximum included snapshot/export file count                                          |
-| `maxFileBytes`         | `10485760`                   | Maximum individual file size (10 MiB)                                                |
-| `maxUploadBytes`       | `104857600`                  | Maximum total snapshot/export bytes (100 MiB)                                        |
-| `autoStopInterval`     | `15`                         | Provider-detected inactivity minutes; `0` disables automatic stop                    |
-| `createTimeoutSeconds` | `300`                        | Sandbox create/start/delete operation timeout                                        |
-| `execTimeoutSeconds`   | `300`                        | Setup commands and individual file transfers                                         |
-| `requestTimeoutMs`     | `60000`                      | SDK HTTP request timeout; separate from operation deadlines                          |
-| `agentEnvAllowlist`    | `[]`                         | Explicit named host provider keys to inject                                          |
-| `onWorktreeRemoved`    | `retain`                     | `retain`, or `confirm-delete` to request a deletion dialog                           |
-| `installDependencies`  | `false`                      | Opt in to running project `npm ci` remotely; package scripts execute project code    |
-| `apiUrl`               | `https://app.daytona.io/api` | Explicit HTTPS management endpoint                                                   |
-| `apiKeyEnv`            | `DAYTONA_API_KEY`            | Host API-key variable name, preferred over JWT                                       |
-| `jwtTokenEnv`          | `DAYTONA_JWT_TOKEN`          | Host SDK JWT variable name                                                           |
-| `organizationIdEnv`    | `DAYTONA_ORGANIZATION_ID`    | Host organization variable name for JWT auth                                         |
+| Field                  | Default                      | Meaning                                                                                |
+| ---------------------- | ---------------------------- | -------------------------------------------------------------------------------------- |
+| `agent`                | `codex`                      | `codex`, `claude-code`, `opencode`, or `pi`                                            |
+| `agentArgs`            | `[]`                         | Literal argv array; values are shell quoted individually                               |
+| `region`               | `eu`                         | Explicit Daytona target; no automatic region fallback                                  |
+| `image`                | `node:22.22.0-bookworm`      | Linux image with Bash, Git, Node 22+, npm, root installation access                    |
+| `snapshot`             | `null`                       | Existing Daytona snapshot; when supplied without `image`, replaces the default image   |
+| `remoteRoot`           | `/workspace`                 | Normalized `/workspace` or a path beneath it                                           |
+| `excludedPaths`        | `[]`                         | Additional exact paths, directory prefixes (`dir/`, `dir/**`), or extensions (`*.ext`) |
+| `maxFiles`             | `10000`                      | Maximum included snapshot/export file count                                            |
+| `maxFileBytes`         | `10485760`                   | Maximum individual file size (10 MiB)                                                  |
+| `maxUploadBytes`       | `104857600`                  | Maximum total snapshot/export bytes (100 MiB)                                          |
+| `autoStopInterval`     | `15`                         | Provider-detected inactivity minutes; `0` disables automatic stop                      |
+| `createTimeoutSeconds` | `300`                        | Sandbox create/start/delete operation timeout                                          |
+| `execTimeoutSeconds`   | `300`                        | Setup commands and individual file transfers                                           |
+| `requestTimeoutMs`     | `60000`                      | SDK HTTP request timeout; separate from operation deadlines                            |
+| `agentEnvAllowlist`    | `[]`                         | Explicit named host provider keys to inject                                            |
+| `customAgents`         | `{}`                         | Declarative terminal-agent profiles; commands run only in the sandbox                  |
+| `allowCandidateAgents` | `false`                      | Explicitly opt in to custom profiles, which remain labeled unverified                  |
+| `onWorktreeRemoved`    | `retain`                     | `retain`, or `confirm-delete` to request a deletion dialog                             |
+| `installDependencies`  | `false`                      | Opt in to running project `npm ci` remotely; package scripts execute project code      |
+| `apiUrl`               | `https://app.daytona.io/api` | Explicit HTTPS management endpoint                                                     |
+| `apiKeyEnv`            | `DAYTONA_API_KEY`            | Host API-key variable name, preferred over JWT                                         |
+| `jwtTokenEnv`          | `DAYTONA_JWT_TOKEN`          | Host SDK JWT variable name                                                             |
+| `organizationIdEnv`    | `DAYTONA_ORGANIZATION_ID`    | Host organization variable name for JWT auth                                           |
 
 Choose one image or snapshot; explicitly setting both fails validation. Unknown
 fields and invalid settings fail before compute allocation. Timeouts do not
@@ -116,11 +125,19 @@ herdr plugin action invoke reconnect --plugin daytona.sandbox
 herdr plugin action invoke apply-changes --plugin daytona.sandbox
 herdr plugin action invoke status --plugin daytona.sandbox
 herdr plugin action invoke delete-sandbox --plugin daytona.sandbox
+herdr plugin action invoke connect-daytona --plugin daytona.sandbox
+herdr plugin action invoke stop --plugin daytona.sandbox
+herdr plugin action invoke info --plugin daytona.sandbox
+herdr plugin action invoke replace-sandbox --plugin daytona.sandbox
+herdr plugin action invoke forget-mapping --plugin daytona.sandbox
 ```
 
 - **Start** captures the invoking Git worktree, including eligible uncommitted
-  and untracked files. A new pane shows the file manifest and provisioning
-  progress while preserving focus. Each start gets a separate sandbox.
+  and untracked files. A new pane shows every eligible path, size, mode and hash,
+  the destination and the manifest digest. Type `UPLOAD <full-digest>` there to
+  approve those exact staged bytes before any provider connection or allocation.
+  Other input cancels. Files changed locally during review do not replace the
+  staged snapshot. Each independent start gets a separate sandbox.
 - **Reconnect** uses the associated pane, or asks you to select a retained
   association for the current worktree. It never reuploads. A live PTY is
   reattached without launching another agent. After stop/archive recovery, a new
@@ -137,7 +154,19 @@ herdr plugin action invoke delete-sandbox --plugin daytona.sandbox
   hide edits. Repeating apply without new edits is a no-op.
 - **Status** reports saved association, sandbox, agent version, paths, phase,
   last pane, and provider state. It never starts a stopped sandbox. A last pane
-  ID is historical and may refer to a disconnected or closed pane.
+  ID is historical and may refer to a disconnected or closed pane. **Info** is
+  an equivalent action and includes custom profile capability/auth metadata.
+- **Connect Daytona account** verifies existing authentication without saving
+  environment keys, or prompts for a key and saves it only after verification.
+- **Stop** stops compute and retains files, baselines and recovery metadata.
+  Reconnect restarts a prepared agent. Stopping an interrupted setup preserves
+  its failure state; it does not make an incomplete workspace ready.
+- **Replace sandbox** requires the exact named deletion confirmation, validates
+  the local worktree and new configuration, then deletes the old sandbox and
+  opens a fresh start with the current configuration and a new upload review.
+- **Delete and forget mapping** uses the same named deletion confirmation and
+  removes the association and its saved review/recovery artifacts only after
+  provider-confirmed deletion. Local worktree files remain unchanged.
 - **Delete** names the sandbox and requires `DELETE <sandbox-id>`. The local
   recovery record remains until Daytona confirms absence/destruction; a deletion
   tombstone remains afterward. Closing a pane or removing a worktree retains the
@@ -152,8 +181,8 @@ pane ID. An occupied UI cannot approve a patch or deletion.
 Sandboxes are non-ephemeral, with `autoDeleteInterval: -1` and `ttlMinutes: 0`.
 The default **15-minute inactivity auto-stop retains files and ends running
 processes**. This is not a promise that agent memory or an unattended run survives
-a stop. Provider archival retains files; archive recovery remains a live test
-gap. The effect of terminal traffic on provider inactivity accounting is also
+a stop. Provider archival retains files; archive recovery passed the Linux live
+check. The effect of terminal traffic on provider inactivity accounting is
 unverified. Increase/disable auto-stop explicitly for longer unattended work,
 accounting for ongoing compute charges. Storage and other provider charges may
 continue after stop. Delete explicitly when finished.
@@ -167,9 +196,45 @@ Pinned agent installers:
 | OpenCode    | `opencode-ai@1.19.5`                   | `opencode`           |
 | Pi          | `@mariozechner/pi-coding-agent@0.73.1` | `pi`                 |
 
-These pins are available package versions, not interactive verification
-receipts. Startup checks record the actual installed version. Custom images must
+All four pins completed authenticated Linux fixture tasks; see the exact
+versions, model routes and remaining host checks in [verification](docs/verification.md).
+Startup checks record the actual installed version. Custom images must
 provide the required tools; failures retain the sandbox for inspection.
+
+## Custom terminal agents
+
+Custom profiles require explicit opt-in and remain labeled
+`user-provided-unverified`. Their commands execute inside the sandbox, using
+the same filtered upload, PTY, review and deletion boundaries. Profiles cannot
+replace builtins and must declare interactive TTY and resume support.
+
+```json
+{
+  "agent": "my-agent",
+  "allowCandidateAgents": true,
+  "customAgents": {
+    "my-agent": {
+      "title": "My Agent",
+      "installationCommand": "npm install --global my-agent@1.2.3",
+      "launchCommand": "my-agent",
+      "versionCommand": "my-agent --version",
+      "expectedVersion": "1.2.3",
+      "authenticationMode": "device-code",
+      "herdrDetectionIdentifier": "generic",
+      "interactiveTTY": true,
+      "resumeSupported": true
+    }
+  }
+}
+```
+
+All nine profile fields are required. Detection identifiers are `generic`,
+`codex`, `claude`, `opencode`, or `pi`. `authenticationMode` describes the
+agent's login method; it does not copy credentials or implement login for it.
+`agentArgs` remains an array of literal arguments, quoted when appended to the
+configured launch command. Agent commands may run shell code remotely; never
+put secret values in commands or arguments. Use the explicit environment
+allowlist or log in inside the sandbox instead.
 
 ## File boundaries
 

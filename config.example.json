@@ -19,5 +19,7 @@
   "apiUrl": "https://app.daytona.io/api",
   "apiKeyEnv": "DAYTONA_API_KEY",
   "jwtTokenEnv": "DAYTONA_JWT_TOKEN",
-  "organizationIdEnv": "DAYTONA_ORGANIZATION_ID"
+  "organizationIdEnv": "DAYTONA_ORGANIZATION_ID",
+  "customAgents": {},
+  "allowCandidateAgents": false
 }
