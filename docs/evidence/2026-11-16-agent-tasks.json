@@ -1,0 +1,79 @@
+{
+  "host": "Linux x86_64",
+  "herdr": "0.9.5",
+  "sdk": "0.231.1",
+  "image": "node:22.22.0-bookworm",
+  "agents": [
+    {
+      "agent": "codex",
+      "version": "codex-cli 0.169.0",
+      "challenge": "codex-2a17ebc4a51f6545",
+      "commit": "323e47c77b52d25605b1202bc7651da3b2324852",
+      "verifiedAt": "2026-11-16T06:35:10.693Z",
+      "modelRoute": "openai/gpt-5.6-sol",
+      "modelProvider": "OpenRouter",
+      "remoteTestsPassed": true,
+      "independentProofDownloadPassed": true,
+      "reviewedPatchReturned": true,
+      "localIndexUnchanged": true
+    },
+    {
+      "agent": "opencode",
+      "version": "1.19.5",
+      "challenge": "opencode-175b5fa6a886978e",
+      "commit": "45099aee8534b6da56a0869fae9a209847d3fe8a",
+      "verifiedAt": "2026-11-16T06:40:05.521Z",
+      "modelRoute": "openai/gpt-5.6-sol",
+      "modelProvider": "OpenRouter",
+      "remoteTestsPassed": true,
+      "independentProofDownloadPassed": true,
+      "reviewedPatchReturned": true,
+      "localIndexUnchanged": true
+    },
+    {
+      "agent": "pi",
+      "version": "0.73.1",
+      "challenge": "pi-7a5df475d30cd1c2",
+      "commit": "944aa180ed2f88c56e15d7f2de12e59721787317",
+      "verifiedAt": "2026-11-16T06:40:05.534Z",
+      "modelRoute": "openai/gpt-5.6-sol",
+      "modelProvider": "OpenRouter",
+      "remoteTestsPassed": true,
+      "independentProofDownloadPassed": true,
+      "reviewedPatchReturned": true,
+      "localIndexUnchanged": true
+    },
+    {
+      "agent": "claude-code",
+      "version": "2.1.325 (Claude Code)",
+      "challenge": "claude-code-20a18f17d8bb7e93",
+      "commit": "ffa4467317a27f6f2f13eea0ef1ce7b01d608349",
+      "verifiedAt": "2026-11-16T06:45:44.713Z",
+      "modelRoute": "anthropic/claude-sonnet-4.6",
+      "modelProvider": "OpenRouter",
+      "remoteTestsPassed": true,
+      "independentProofDownloadPassed": true,
+      "reviewedPatchReturned": true,
+      "localIndexUnchanged": true
+    },
+    {
+      "agent": "custom-codex",
+      "version": "codex-cli 0.169.0",
+      "challenge": "custom-codex-71a185a921392131",
+      "commit": "dfa13b9fccb2da7dc1c48d2926d3f272e0becd61",
+      "verifiedAt": "2026-11-16T07:04:59.541Z",
+      "modelRoute": "openai/gpt-5.6-sol",
+      "modelProvider": "OpenRouter",
+      "remoteTestsPassed": true,
+      "independentProofDownloadPassed": true,
+      "reviewedPatchReturned": true,
+      "localIndexUnchanged": true
+    }
+  ],
+  "cleanup": "All five authenticated-session sandboxes confirmed absent by fresh provider lookup; isolated server, TUI and automation daemon stopped.",
+  "limitations": [
+    "No interactive macOS evidence",
+    "No timed 15-minute inactivity experiment",
+    "No Herdr 0.8.0 cloud attachment"
+  ]
+}

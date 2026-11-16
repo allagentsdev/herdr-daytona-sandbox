@@ -1,0 +1,109 @@
+id = "daytona.sandbox"
+name = "Daytona Sandbox"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Run a coding agent in a persistent Daytona sandbox and review returned changes."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["npm", "ci", "--omit=dev"]
+
+[[actions]]
+id = "start-agent"
+title = "Start agent in Daytona"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "reconnect"
+title = "Reconnect to Daytona agent"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "apply-changes"
+title = "Review Daytona changes locally"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "delete-sandbox"
+title = "Delete Daytona sandbox"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "status"
+title = "Daytona sandbox status"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[panes]]
+id = "connect"
+title = "Connect Daytona account"
+placement = "popup"
+width = "88%"
+height = "80%"
+command = ["node", "src/connect-pane.mjs"]
+
+[[panes]]
+id = "start"
+title = "Start in Daytona"
+placement = "split"
+command = ["node", "src/start-pane.mjs"]
+
+[[panes]]
+id = "agent"
+title = "Daytona agent"
+placement = "split"
+command = ["node", "src/agent-pane.mjs"]
+
+[[panes]]
+id = "operation"
+title = "Daytona Sandbox"
+placement = "popup"
+width = "88%"
+height = "80%"
+command = ["node", "src/operation-pane.mjs"]
+
+[[panes]]
+id = "confirmation"
+title = "Confirm Daytona deletion"
+placement = "popup"
+width = "88%"
+height = "80%"
+command = ["node", "src/confirmation-pane.mjs"]
+
+[[events]]
+on = "worktree.removed"
+command = ["node", "src/worktree-removed.mjs"]
+
+[[actions]]
+id = "connect-daytona"
+title = "Connect Daytona account"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "stop"
+title = "Stop Daytona sandbox"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "info"
+title = "Show Daytona mapping"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "replace-sandbox"
+title = "Replace Daytona sandbox"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "forget-mapping"
+title = "Delete Daytona sandbox and forget mapping"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
