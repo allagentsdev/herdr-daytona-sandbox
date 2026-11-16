@@ -22,7 +22,7 @@ installed into a Daytona sandbox and are not evidence of interactive support.
 
 ## Automated local checks
 
-- `npm ci` followed by `npm run check`: pass on Linux with 27 tests, Prettier,
+- `npm ci` followed by `npm run check`: pass on Linux with 35 tests, Prettier,
   ESLint and manifest verification. macOS CI remains pending publication.
 - Dependency installation from the public npm registry succeeded with zero npm
   audit findings. The host's unrelated configured npm registry was unreachable.
@@ -37,6 +37,14 @@ installed into a Daytona sandbox and are not evidence of interactive support.
 - The actual remote export script runs locally against a repository with hostile
   Git configuration/hooks. It exports binary bytes without consulting that Git
   metadata, and a bounded streaming-download test rejects an oversized stream.
+- SDK-shaped local transport tests exercise the full successful preparation path
+  for all four adapters: binary upload, executable modes, Git initialization,
+  installed-version recording, and an empty invoking subdirectory. Agent package
+  installation is stubbed; these are not real agent startup checks.
+- Separate Node processes verify mutual exclusion and atomic state updates after
+  a dead lock owner. Regressions cover replacement lock owners, non-overlapping
+  local edits, interruption before/after patch writes, complete exclusion
+  inventories, initial PTY handshake recovery, and failed/unknown PTY exits.
 - The real pinned SDK constructor is exercised from a hostile repository cwd.
   It runs in the plugin-owned SDK directory with the explicit expected endpoint
   and region. This test makes no provider request.
@@ -66,8 +74,12 @@ session was not changed.
 The first isolated test path exceeded Unix socket path length limits. Shorter
 temporary paths resolved it; this did not require a plugin change.
 
-GitHub review-branch installation and a fresh production-only dependency hook
-are checked after the implementation branch is published. Default-branch install
+Fresh `npm ci --omit=dev` succeeded in a disposable plugin directory containing
+spaces (169 dependencies; npm audit: zero findings). Both Herdr versions linked
+that path, and its runtime dispatcher emitted `missing_auth` from an unrelated
+cwd with production dependencies only.
+
+GitHub review-branch installation is checked after publication. Default-branch install
 cannot be verified until this implementation is merged; no merge is authorized
 by this work.
 

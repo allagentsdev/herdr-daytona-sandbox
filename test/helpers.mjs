@@ -5,7 +5,7 @@ import { runSync } from "../src/process.mjs";
 export function temporary(t, prefix = "daytona-test-") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
+  return fs.realpathSync(dir);
 }
 export function git(root, args, options = {}) {
   return runSync("git", args, { cwd: root, ...options });

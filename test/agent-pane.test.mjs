@@ -125,7 +125,7 @@ test("uncertain initial PTY launch is reattached without resending its command",
     },
     disconnect: async () => {},
     resize: async () => {},
-    wait: async () => ({}),
+    wait: async () => ({ exitCode: 0 }),
   };
   const box = {
     state: "started",
@@ -153,4 +153,123 @@ test("uncertain initial PTY launch is reattached without resending its command",
   await attachAgent(store, id, provider, io);
   assert.equal(connected, 1);
   assert.equal(sent, 1);
+});
+
+test("an active creating-phase PTY completes its first launch once", async (t) => {
+  const store = new Store(temporary(t)),
+    id = randomUUID(),
+    config = validateConfig({});
+  await store.create({
+    id,
+    namespace: "n",
+    localRoot: "/tmp",
+    relativeCwd: ".",
+    phase: "ready",
+    sandboxId: "box",
+    config,
+    ptyId: "surviving-shell",
+    ptyPhase: "creating",
+  });
+  let sent = 0,
+    connected = 0;
+  const handle = {
+    sendInput: async () => {
+      sent++;
+    },
+    disconnect: async () => {},
+    resize: async () => {},
+    wait: async () => ({ exitCode: 0 }),
+  };
+  const box = {
+    state: "started",
+    process: {
+      createPty: async () => {
+        throw Error("must reuse");
+      },
+      getPtySessionInfo: async () => ({ active: true }),
+      connectPty: async () => {
+        connected++;
+        return handle;
+      },
+    },
+  };
+  const provider = {
+    get: async () => box,
+    resume: async () => box,
+    environment: () => ({}),
+  };
+  const io = {
+    input: new PassThrough(),
+    output: new PassThrough(),
+    signals: new EventEmitter(),
+  };
+  await attachAgent(store, id, provider, io);
+  await attachAgent(store, id, provider, io);
+  assert.equal(store.get(id).ptyPhase, "launched");
+  assert.equal(sent, 1);
+  assert.equal(connected, 2);
+});
+
+test("failed agent exit and unresolved transport loss are reported after terminal cleanup", async (t) => {
+  for (const result of [
+    { exitCode: 7 },
+    {},
+    { exitCode: 0, error: "untrusted diagnostic" },
+  ]) {
+    const store = new Store(temporary(t)),
+      id = randomUUID(),
+      config = validateConfig({});
+    await store.create({
+      id,
+      namespace: "n",
+      localRoot: "/tmp",
+      relativeCwd: ".",
+      phase: "ready",
+      sandboxId: "box",
+      config,
+    });
+    let disconnected = false,
+      raw = false;
+    const handle = {
+      sendInput: async () => {},
+      disconnect: async () => {
+        disconnected = true;
+      },
+      resize: async () => {},
+      wait: async () => result,
+    };
+    const box = {
+      state: "started",
+      process: { createPty: async () => handle },
+    };
+    const provider = {
+      get: async () => box,
+      resume: async () => box,
+      environment: () => ({}),
+    };
+    const input = new PassThrough();
+    input.isTTY = true;
+    input.setRawMode = (v) => {
+      raw = v;
+    };
+    await assert.rejects(
+      attachAgent(store, id, provider, {
+        input,
+        output: new PassThrough(),
+        signals: new EventEmitter(),
+      }),
+      (e) => {
+        assert.equal(
+          e.code,
+          result.exitCode === 7 ? "agent_exit" : "pty_transport",
+        );
+        if (result.exitCode === 7) assert.equal(e.exitCode, 7);
+        assert.doesNotMatch(e.message, /untrusted diagnostic/);
+        return true;
+      },
+    );
+    assert.equal(raw, false);
+    assert.equal(disconnected, true);
+    assert.equal(store.get(id).phase, "detached");
+  }
 });

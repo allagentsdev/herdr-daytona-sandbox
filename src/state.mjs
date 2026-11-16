@@ -30,6 +30,38 @@ export function atomicJson(file, value) {
     fs.rmSync(temp, { force: true });
   }
 }
+function deadOwner(file) {
+  const pid = Number(fs.readFileSync(file, "utf8"));
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (e) {
+    return e.code === "ESRCH";
+  }
+}
+function reclaimLock(file) {
+  const recovery = `${file}.recovery`;
+  let fd;
+  try {
+    fd = fs.openSync(recovery, "wx", 0o600);
+  } catch (e) {
+    if (e.code === "EEXIST") return false;
+    throw e;
+  }
+  try {
+    fs.writeFileSync(fd, String(process.pid));
+    if (!deadOwner(file)) return false;
+    fs.unlinkSync(file);
+    return true;
+  } catch (e) {
+    if (e.code === "ENOENT") return true;
+    throw e;
+  } finally {
+    fs.closeSync(fd);
+    fs.unlinkSync(recovery);
+  }
+}
 export class Store {
   constructor(directory = process.env.HERDR_PLUGIN_STATE_DIR) {
     if (!directory || !path.isAbsolute(directory))
@@ -83,22 +115,11 @@ export class Store {
         break;
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
-        let pid;
         try {
-          pid = Number(fs.readFileSync(file, "utf8"));
+          if (deadOwner(file) && reclaimLock(file)) continue;
         } catch (e) {
           if (e.code === "ENOENT") continue;
           throw e;
-        }
-        if (Number.isSafeInteger(pid) && pid > 0) {
-          try {
-            process.kill(pid, 0);
-          } catch (e) {
-            if (e.code === "ESRCH") {
-              fs.rmSync(file, { force: true });
-              continue;
-            }
-          }
         }
         await delay(interval);
       }

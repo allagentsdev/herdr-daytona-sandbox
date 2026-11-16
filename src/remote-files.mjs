@@ -25,7 +25,7 @@ function walk(relative = "") {
     const p = relative ? `${relative}/${dirent.name}` : dirent.name;
     const reason = pathExclusionReason(p, config);
     if (reason) {
-      if (excluded.length < config.maxFiles) excluded.push({ path: p, reason });
+      excluded.push({ path: p, reason });
       continue;
     }
     if (dirent.isDirectory()) {
@@ -33,8 +33,7 @@ function walk(relative = "") {
       continue;
     }
     if (!dirent.isFile()) {
-      if (excluded.length < config.maxFiles)
-        excluded.push({ path: p, reason: "not-regular-file" });
+      excluded.push({ path: p, reason: "not-regular-file" });
       continue;
     }
     const entry = readRegular(root, p, config.maxFileBytes);

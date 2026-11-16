@@ -1,7 +1,7 @@
 import path from "node:path";
 import { launchCommand } from "./adapters.mjs";
 import { missing, providerCall, newPtyId } from "./sandbox.mjs";
-import { PluginError } from "./result.mjs";
+import { PluginError, errorMessage } from "./result.mjs";
 
 export async function attachAgent(
   store,
@@ -27,6 +27,16 @@ export async function attachAgent(
     const onData = (data) => {
       output.write(Buffer.from(data));
     };
+    const launch = async () => {
+      try {
+        await store.update(id, (v) => ({ ...v, ptyPhase: "launching" }));
+        await providerCall(() => handle.sendInput(launchCommand(r.config)));
+        await store.update(id, (v) => ({ ...v, ptyPhase: "launched" }));
+      } catch (e) {
+        await handle.disconnect();
+        throw e;
+      }
+    };
     let active = false;
     if (r.ptyId) {
       try {
@@ -41,7 +51,8 @@ export async function attachAgent(
       handle = await providerCall(() =>
         box.process.connectPty(r.ptyId, { onData }),
       );
-      if (r.ptyPhase !== "launched")
+      if (r.ptyPhase === "creating") await launch();
+      else if (r.ptyPhase !== "launched")
         output.write(
           "\r\nPrevious launch outcome is uncertain. Attached without resending the agent command.\r\n",
         );
@@ -62,14 +73,7 @@ export async function attachAgent(
           onData,
         }),
       );
-      try {
-        await store.update(id, (v) => ({ ...v, ptyPhase: "launching" }));
-        await providerCall(() => handle.sendInput(launchCommand(r.config)));
-        await store.update(id, (v) => ({ ...v, ptyPhase: "launched" }));
-      } catch (e) {
-        await handle.disconnect();
-        throw e;
-      }
+      await launch();
     }
     try {
       await store.update(id, (v) => ({
@@ -118,7 +122,29 @@ export async function attachAgent(
     if (input.isTTY) input.setRawMode(true);
     input.resume();
     resize();
-    return await Promise.race([providerCall(() => handle.wait()), detached]);
+    const result = await Promise.race([
+      providerCall(() => handle.wait()),
+      detached,
+    ]);
+    if (result.detached) return result;
+    if (result.error || !Number.isInteger(result.exitCode))
+      throw new PluginError(
+        "pty_transport",
+        "Terminal transport ended without a confirmed clean agent exit. The sandbox is retained; reconnect to inspect the session.",
+      );
+    if (result.exitCode !== 0) {
+      const error = new PluginError(
+        "agent_exit",
+        `Agent exited with status ${result.exitCode}. Sandbox files are retained.`,
+      );
+      error.exitCode =
+        result.exitCode > 0 && result.exitCode <= 255 ? result.exitCode : 1;
+      throw error;
+    }
+    return result;
+  } catch (e) {
+    await store.update(id, (v) => ({ ...v, lastError: errorMessage(e) }));
+    throw e;
   } finally {
     input.off("data", send);
     input.off("end", onEnd);

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { managementAuth, agentEnvironment } from "./config.mjs";
+import { managementAuth, agentEnvironment, safeRelative } from "./config.mjs";
 import { getAdapter, installCommand } from "./adapters.mjs";
 import {
   readSnapshot,
@@ -179,7 +179,7 @@ export class DaytonaProvider {
     if (c.installDependencies) await this.exec(sandbox, "npm ci", c.remoteRoot);
     await this.exec(
       sandbox,
-      `test -d ${shellQuote(path.posix.join(c.remoteRoot, record.relativeCwd))}`,
+      `mkdir -p -- ${shellQuote(path.posix.join(c.remoteRoot, record.relativeCwd))}`,
       c.remoteRoot,
     );
     return installedVersion;
@@ -274,7 +274,15 @@ export class DaytonaProvider {
           )
         ).toString("utf8"),
       );
-      if (!Array.isArray(metadata.files) || metadata.files.length > c.maxFiles)
+      if (
+        !Array.isArray(metadata.files) ||
+        metadata.files.length > c.maxFiles ||
+        !Array.isArray(metadata.excluded) ||
+        metadata.excluded.length > c.maxFiles * 10 ||
+        metadata.excluded.some(
+          (e) => !e || !safeRelative(e.path) || typeof e.reason !== "string",
+        )
+      )
         throw new PluginError(
           "remote_export",
           "Invalid remote file inventory.",
@@ -326,9 +334,7 @@ export class DaytonaProvider {
       return saveSnapshot(
         directory,
         entries,
-        Array.isArray(metadata.excluded)
-          ? metadata.excluded.slice(0, c.maxFiles)
-          : [],
+        metadata.excluded.map(({ path, reason }) => ({ path, reason })),
       );
     } finally {
       await this.exec(

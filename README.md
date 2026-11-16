@@ -227,14 +227,22 @@ delete or recover manually. Reconnect deliberately refuses to overwrite a
 partially prepared workspace. If an initial PTY launch was uncertain, it attaches
 without resending the command and reports that uncertainty.
 
-An approved apply saves a durable intent before mutation. If files applied but
-the checkpoint write failed, a later apply reconciles the exact reviewed result
-without replaying it. An interrupted/partial mismatch requires inspection of
+An approved apply saves private snapshots of the changed local files before and
+after the checked patch. This preserves new non-overlapping local edits while
+keeping the remote checkpoint separate. If files applied but the checkpoint
+write failed, a later apply reconciles the recorded local result without
+replaying it. If interruption happened before writing, unchanged local files
+allow a checked retry. A partial or divergent mismatch requires inspection of
 the retained artifact. Never delete a baseline/checkpoint to force an apply.
 
+If a previously uploaded/checkpoint file becomes excluded remotely (for example,
+it becomes a symlink or contains detected secret material), export stops instead
+of presenting it as a deletion. Inspect the remote file before retrying.
+
 Locks serialize actions on one association. A dead process's lock is recovered
-on retry; if a malformed lock remains, inspect its PID and remove only that
-association's `.lock` file after confirming no action is running. State may
+on retry under a separate recovery lock, with its owner checked again. If a
+malformed lock or abandoned `.lock.recovery` remains, inspect the recorded PIDs
+and remove only that association's lock after confirming no action is running. State may
 contain private source; remove local artifacts only after remote cleanup and
 when you no longer need recovery. No background orphan collector runs.
 

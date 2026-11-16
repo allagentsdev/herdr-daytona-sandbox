@@ -181,3 +181,97 @@ test("successful apply recovers its checkpoint after a failed state write withou
   assert.notEqual(store.get(id).checkpoint, base.directory);
   assert.equal(store.get(id).pendingApply, null);
 });
+
+test("nonoverlapping local edits survive apply, repeated export, and a later remote edit", async (t) => {
+  const { root, remote, store, id, provider } = await fixture(t);
+  const initial = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+  write(root, "a", initial);
+  write(remote, "a", initial);
+  const base = captureSnapshot(
+    root,
+    store.get(id).config,
+    path.join(store.artifacts(id), "long-baseline"),
+  );
+  await store.update(id, (r) => ({
+    ...r,
+    baseline: base.directory,
+    baselineDigest: base.digest,
+    checkpoint: base.directory,
+    checkpointDigest: base.digest,
+  }));
+  write(remote, "a", initial.replace("one", "remote one"));
+  write(root, "a", initial.replace("ten", "local ten"));
+  const first = await preparePatch(store, id, provider);
+  await applyReviewedPatch(store, id, first.artifact, first.digest);
+  assert.equal(
+    fs.readFileSync(path.join(root, "a"), "utf8"),
+    initial.replace("one", "remote one").replace("ten", "local ten"),
+  );
+  assert.equal(store.get(id).pendingApply, null);
+  assert.equal((await preparePatch(store, id, provider)).status, "no_change");
+  write(
+    remote,
+    "a",
+    initial.replace("one", "remote one").replace("two", "remote two"),
+  );
+  const next = await preparePatch(store, id, provider);
+  await applyReviewedPatch(store, id, next.artifact, next.digest);
+  assert.equal(
+    fs.readFileSync(path.join(root, "a"), "utf8"),
+    initial
+      .replace("one", "remote one")
+      .replace("two", "remote two")
+      .replace("ten", "local ten"),
+  );
+});
+
+test("filtered checkpoint files abort export instead of becoming local deletions", async (t) => {
+  const { root, remote, store, id, provider } = await fixture(t);
+  write(remote, "a", "-----BEGIN PRIVATE KEY-----\nfixture only\n");
+  await assert.rejects(preparePatch(store, id, provider), {
+    code: "incomplete_export",
+  });
+  assert.equal(
+    fs.readFileSync(path.join(root, "a"), "utf8"),
+    "local starting edit\n",
+  );
+  fs.unlinkSync(path.join(remote, "a"));
+  fs.symlinkSync("mode", path.join(remote, "a"));
+  await assert.rejects(preparePatch(store, id, provider), {
+    code: "incomplete_export",
+  });
+  assert.equal(store.get(id).pendingApply, undefined);
+});
+
+test("approval interrupted after intent persistence and before writing can be safely retried", async (t) => {
+  const { root, remote, store, id, provider } = await fixture(t);
+  write(remote, "a", "remote retry\n");
+  const candidate = await preparePatch(store, id, provider);
+  const rename = fs.renameSync;
+  let interrupted = false;
+  const mock = t.mock.method(fs, "renameSync", (source, target) => {
+    const interrupt =
+      target === store.file(id) &&
+      !interrupted &&
+      JSON.parse(fs.readFileSync(source, "utf8")).pendingApply;
+    const result = rename(source, target);
+    if (interrupt) {
+      interrupted = true;
+      throw Object.assign(Error("interrupted after durable intent"), {
+        code: "EINTR",
+      });
+    }
+    return result;
+  });
+  await assert.rejects(
+    applyReviewedPatch(store, id, candidate.artifact, candidate.digest),
+  );
+  assert.equal(
+    fs.readFileSync(path.join(root, "a"), "utf8"),
+    "local starting edit\n",
+  );
+  mock.mock.restore();
+  await applyReviewedPatch(store, id, candidate.artifact, candidate.digest);
+  assert.equal(fs.readFileSync(path.join(root, "a"), "utf8"), "remote retry\n");
+  assert.equal(store.get(id).pendingApply, null);
+});

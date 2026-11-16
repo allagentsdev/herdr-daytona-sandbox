@@ -28,6 +28,8 @@ test("actual export scanner ignores remote Git configuration/hooks and transfers
   );
   write(root, ".gitignore", "a\n");
   write(root, ".env", "never export");
+  for (const name of [".env.1", ".env.2", ".env.3"])
+    write(root, name, "excluded");
   fs.symlinkSync("/etc/passwd", path.join(root, "link"));
   const box = {
     id: "box",
@@ -50,7 +52,7 @@ test("actual export scanner ignores remote Git configuration/hooks and transfers
   };
   const provider = new DaytonaProvider(
     { get: async () => box },
-    { ...validateConfig({}), remoteRoot: root },
+    { ...validateConfig({ maxFiles: 3 }), remoteRoot: root },
   );
   const result = await provider.exportSnapshot(
     { sandboxId: "box" },
@@ -65,6 +67,7 @@ test("actual export scanner ignores remote Git configuration/hooks and transfers
     Buffer.from([0, 254, 128]),
   );
   assert.equal(fs.existsSync(sentinel), false);
+  assert.ok(result.excluded.some((e) => e.path === "link"));
   await assert.rejects(provider.download(box, path.join(root, "a"), 2), {
     code: "download_limit",
   });

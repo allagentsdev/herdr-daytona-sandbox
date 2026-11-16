@@ -20,6 +20,9 @@ export async function runPane(action, fn) {
   } catch (e) {
     emitFailure(action, e);
     await dismiss();
-    process.exitCode = 1;
+    process.exitCode =
+      Number.isInteger(e.exitCode) && e.exitCode > 0 && e.exitCode <= 255
+        ? e.exitCode
+        : 1;
   }
 }

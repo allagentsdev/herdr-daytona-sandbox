@@ -10,6 +10,7 @@ import {
   assertSafeParents,
   readRegular,
   contentExclusionReason,
+  saveSnapshot,
 } from "./manifest.mjs";
 import { atomicJson } from "./state.mjs";
 import { PluginError, safeText } from "./result.mjs";
@@ -201,16 +202,117 @@ function localMatches(record, snapshot, paths) {
     }
   });
 }
+function captureLocalPaths(root, paths, config, directory) {
+  const entries = [];
+  let total = 0;
+  for (const p of paths) {
+    assertSafeParents(root, p, { allowMissing: true });
+    let entry;
+    try {
+      entry = readRegular(root, p, config.maxFileBytes);
+    } catch (e) {
+      if (e.code === "ENOENT") continue;
+      throw e;
+    }
+    total += entry.bytes.length;
+    if (total > config.maxUploadBytes * 2)
+      throw new PluginError(
+        "snapshot_limit",
+        "Local approval receipt exceeds its byte limit.",
+      );
+    entries.push({ path: p, ...entry });
+  }
+  return saveSnapshot(directory, entries);
+}
+function approvalReceipt(store, record, artifact, candidate) {
+  const id = randomUUID(),
+    directory = path.join(
+      reviewDirectory(store, record.id, artifact),
+      "approvals",
+      id,
+    );
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const before = captureLocalPaths(
+    record.localRoot,
+    candidate.changedPaths,
+    record.config,
+    path.join(directory, "before"),
+  );
+  const work = fs.mkdtempSync(path.join(directory, "work-"));
+  try {
+    git(work, ["init", "-q"]);
+    for (const f of before.files) {
+      const target = path.join(work, f.path);
+      fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+      fs.copyFileSync(path.join(before.directory, "files", f.path), target);
+      fs.chmodSync(target, f.mode === "100755" ? 0o755 : 0o644);
+    }
+    const applied = git(
+      work,
+      ["apply", "--binary", "--whitespace=nowarn", "-"],
+      { input: candidate.patch, check: false },
+    );
+    if (applied.status !== 0)
+      throw new PluginError(
+        "patch_conflict",
+        "The patch no longer applies to the captured local files. Nothing was changed in the destination.",
+      );
+    const after = captureLocalPaths(
+      work,
+      candidate.changedPaths,
+      record.config,
+      path.join(directory, "after"),
+    );
+    return {
+      id,
+      beforeDigest: before.digest,
+      afterDigest: after.digest,
+      before,
+      after,
+    };
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+}
+function readApprovalReceipt(store, record, pending) {
+  const receipt = pending.receipt;
+  if (!receipt)
+    throw new PluginError(
+      "apply_recovery_required",
+      "The retained approval receipt is incomplete. Inspect its artifact before recovery.",
+    );
+  store.file(receipt.id);
+  const directory = path.join(
+    reviewDirectory(store, record.id, pending.artifact),
+    "approvals",
+    receipt.id,
+  );
+  const before = readSnapshot(path.join(directory, "before")),
+    after = readSnapshot(path.join(directory, "after"));
+  if (
+    before.digest !== receipt.beforeDigest ||
+    after.digest !== receipt.afterDigest
+  )
+    throw new PluginError(
+      "snapshot_corrupt",
+      "Approval receipt integrity check failed.",
+    );
+  return { before, after };
+}
 async function recoverApply(store, record) {
   if (!record.pendingApply) return record;
   destination(record);
   const p = record.pendingApply,
     candidate = verifiedCandidate(store, record, p.artifact, p.digest);
-  if (!localMatches(record, candidate.after, candidate.changedPaths))
+  const receipt = readApprovalReceipt(store, record, p);
+  if (!localMatches(record, receipt.after, candidate.changedPaths)) {
+    if (localMatches(record, receipt.before, candidate.changedPaths))
+      return store.update(record.id, (v) => ({ ...v, pendingApply: null }));
     throw new PluginError(
       "apply_recovery_required",
       "An approved apply was interrupted. Compare local files with the retained review artifact before retrying; checkpoint unchanged.",
     );
+  }
   return store.update(record.id, (v) => ({
     ...v,
     checkpoint: candidate.after.directory,
@@ -237,6 +339,27 @@ export async function preparePatch(store, id, provider) {
     );
     validateSnapshot(before, r.config);
     validateSnapshot(after, r.config);
+    const excluded = new Set(
+      (after.excluded ?? [])
+        .filter((e) => typeof e?.path === "string")
+        .map((e) => e.path),
+    );
+    if (
+      before.files.some((f) => {
+        let current = f.path;
+        while (current) {
+          if (excluded.has(current)) return true;
+          const slash = current.lastIndexOf("/");
+          if (slash < 0) break;
+          current = current.slice(0, slash);
+        }
+        return false;
+      })
+    )
+      throw new PluginError(
+        "incomplete_export",
+        "A checkpoint path was filtered from the remote export. No deletion patch was generated; inspect excluded files or symlinks.",
+      );
     const changedPaths = compareSnapshots(before, after),
       patch = buildPatch(before, after);
     if (patch.length > r.config.maxUploadBytes * 10)
@@ -322,25 +445,38 @@ export async function applyReviewedPatch(store, id, artifact, expectedDigest) {
         "patch_conflict",
         "git apply --check rejected this patch. Local files and checkpoint are unchanged.",
       );
+    const receipt = approvalReceipt(store, r, artifact, candidate);
     await store.update(id, (v) => ({
       ...v,
-      pendingApply: { artifact, digest: expectedDigest },
+      pendingApply: {
+        artifact,
+        digest: expectedDigest,
+        receipt: {
+          id: receipt.id,
+          beforeDigest: receipt.beforeDigest,
+          afterDigest: receipt.afterDigest,
+        },
+      },
     }));
     destination(r);
     for (const p of candidate.changedPaths)
       assertSafeParents(r.localRoot, p, { allowMissing: true });
+    if (!localMatches(r, receipt.before, candidate.changedPaths))
+      throw new PluginError(
+        "patch_conflict",
+        "Local files changed while preparing approval. No patch was applied; inspect the retained approval receipt.",
+      );
     const applied = git(r.localRoot, args, {
       input: candidate.patch,
       check: false,
     });
     if (applied.status !== 0) {
-      await store.update(id, (v) => ({ ...v, pendingApply: null }));
       throw new PluginError(
         "patch_conflict",
         "git apply failed. Check the destination and retained review; checkpoint unchanged.",
       );
     }
-    if (!localMatches(r, candidate.after, candidate.changedPaths))
+    if (!localMatches(r, receipt.after, candidate.changedPaths))
       throw new PluginError(
         "apply_recovery_required",
         "Applied files do not match the reviewed result. Checkpoint unchanged; retained approval can be reconciled.",
