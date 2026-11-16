@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import {
   runAction,
   selectAssociation,
@@ -58,6 +60,20 @@ test("start validates before opening a progress pane and captures source context
     JSON.stringify(store.list()),
     /fixture-control-key-not-for-state/,
   );
+  // Herdr resolves relative manifest commands from the pane's requested cwd.
+  const pane = spawnSync(process.execPath, ["src/start-pane.mjs"], {
+    cwd: opened[2].cwd ?? fileURLToPath(new URL("..", import.meta.url)),
+    env: {
+      PATH: process.env.PATH,
+      HERDR_SOCKET_PATH: env.HERDR_SOCKET_PATH,
+      HERDR_PLUGIN_STATE_DIR: store.directory,
+      DAYTONA_ASSOCIATION: result.association,
+    },
+    encoding: "utf8",
+  });
+  assert.match(pane.stdout, /Capturing filtered worktree/);
+  assert.match(pane.stdout + pane.stderr, /missing_auth/);
+  assert.ok(store.get(result.association).baseline);
 });
 test("unassociated reconnect requires selection, even for one retained record", async (t) => {
   const store = new Store(temporary(t)),

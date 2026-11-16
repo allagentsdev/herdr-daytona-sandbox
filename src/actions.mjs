@@ -100,7 +100,6 @@ export async function runAction(action, args = {}, options = {}) {
         ...paneOptions,
         placement: "split",
         targetPaneId: r.sourcePaneId,
-        cwd: r.localCwd,
         focus: false,
         env: {
           ...paneOptions.env,
@@ -159,7 +158,6 @@ export async function runAction(action, args = {}, options = {}) {
       ...paneOptions,
       placement: "split",
       targetPaneId: context.focused_pane_id ?? env.HERDR_PANE_ID,
-      cwd: fs.existsSync(r.localCwd) ? r.localCwd : undefined,
       focus: false,
       env: {
         ...paneOptions.env,
