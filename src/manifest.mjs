@@ -93,11 +93,14 @@ export function pathExclusionReason(p, c) {
   )
     return "agent-credentials";
   if (
-    c.excludedPaths.some(
-      (prefix) =>
-        p === prefix.replace(/\/$/, "") ||
-        p.startsWith(`${prefix.replace(/\/$/, "")}/`),
-    )
+    c.excludedPaths.some((pattern) => {
+      if (pattern.startsWith("*."))
+        return p.split("/").at(-1).endsWith(pattern.slice(1));
+      const prefix = pattern.endsWith("/**")
+        ? pattern.slice(0, -3)
+        : pattern.replace(/\/$/, "");
+      return p === prefix || p.startsWith(`${prefix}/`);
+    })
   )
     return "configured-exclusion";
   return null;

@@ -116,11 +116,15 @@ export function validateConfig(candidate) {
     if (!Array.isArray(c[k]) || !c[k].every(literalString))
       invalid(`${k} must be an array of literal strings.`);
   if (
-    c.excludedPaths.some(
-      (p) => !safeRelative(p.replace(/\/$/, "")) || /[?*[\]]/.test(p),
-    )
+    c.excludedPaths.some((p) => {
+      if (/^\*\.[^/*?[\]\\]+$/.test(p)) return false;
+      const prefix = p.endsWith("/**") ? p.slice(0, -3) : p.replace(/\/$/, "");
+      return !safeRelative(prefix) || /[?*[\]]/.test(prefix);
+    })
   )
-    invalid("excludedPaths must contain literal repository-relative paths.");
+    invalid(
+      "excludedPaths accepts exact paths, directory prefixes (dir/ or dir/**), and extensions (*.ext) only.",
+    );
   if (
     c.agentEnvAllowlist.some(
       (k) =>

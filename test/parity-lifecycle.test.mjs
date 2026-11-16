@@ -143,3 +143,21 @@ test("forget removes only confirmed-deleted association and its recovery artifac
   assert.equal(fs.existsSync(store.file(id)), false);
   assert.equal(fs.existsSync(artifacts), false);
 });
+
+test("stopping interrupted setup does not make an unprepared workspace reconnectable", async (t) => {
+  const { store, id } = await association(t);
+  await store.update(id, (v) => ({
+    ...v,
+    phase: "failed",
+    lastError: "Agent installation failed.",
+  }));
+  const box = {
+    state: "started",
+    stop: async () => {
+      box.state = "stopped";
+    },
+  };
+  await stopAssociation(store, id, { get: async () => box });
+  assert.equal(store.get(id).phase, "failed");
+  assert.equal(store.get(id).lastError, "Agent installation failed.");
+});

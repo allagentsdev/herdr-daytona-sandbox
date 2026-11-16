@@ -101,7 +101,7 @@ test("invalid config fails before allocation", () => {
     { image: "x", snapshot: "y" },
     { remoteRoot: "/workspace/../etc" },
     { excludedPaths: ["../a"] },
-    { excludedPaths: ["*.key"] },
+    { excludedPaths: ["a/*.key"] },
     { agentEnvAllowlist: ["DAYTONA_API_KEY"] },
     { agentEnvAllowlist: ["BASH_ENV"] },
     { maxUploadBytes: 0 },

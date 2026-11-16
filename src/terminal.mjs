@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { launchCommand } from "./adapters.mjs";
 import { missing, providerCall, newPtyId } from "./sandbox.mjs";
 import { PluginError, errorMessage } from "./result.mjs";
@@ -10,6 +11,16 @@ export async function attachAgent(
   { input = process.stdin, output = process.stdout, signals = process } = {},
 ) {
   let handle;
+  const transportId = randomUUID();
+  const updateRetained = async (fn) => {
+    try {
+      await store.update(id, (record) =>
+        record.transportId === transportId ? fn(record) : record,
+      );
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  };
   await store.withLock(id, async () => {
     let r = store.get(id);
     if (
@@ -82,6 +93,7 @@ export async function attachAgent(
       await store.update(id, (v) => ({
         ...v,
         phase: "connected",
+        transportId,
         remotePaneId: process.env.HERDR_PANE_ID ?? v.remotePaneId,
         lastError: null,
       }));
@@ -130,11 +142,15 @@ export async function attachAgent(
       detached,
     ]);
     if (result.detached) return result;
-    if (
-      ["stopping", "stopped", "deleting", "deleted"].includes(
-        store.get(id).phase,
-      )
-    )
+    let current;
+    try {
+      current = store.get(id);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (!current) return { associationRemoved: true };
+    if (current.transportId !== transportId) return { superseded: true };
+    if (["stopping", "stopped", "deleting", "deleted"].includes(current.phase))
       return { stopped: true };
     if (result.error || !Number.isInteger(result.exitCode))
       throw new PluginError(
@@ -152,7 +168,7 @@ export async function attachAgent(
     }
     return result;
   } catch (e) {
-    await store.update(id, (v) => ({ ...v, lastError: errorMessage(e) }));
+    await updateRetained((v) => ({ ...v, lastError: errorMessage(e) }));
     throw e;
   } finally {
     input.off("data", send);
@@ -167,7 +183,7 @@ export async function attachAgent(
       "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1049l\x1b[?25h\x1b[0m",
     );
     await handle.disconnect();
-    await store.update(id, (v) => ({
+    await updateRetained((v) => ({
       ...v,
       phase: v.phase === "connected" ? "detached" : v.phase,
     }));

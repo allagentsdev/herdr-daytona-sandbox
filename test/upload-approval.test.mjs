@@ -246,3 +246,33 @@ test("an otherwise valid replacement staged manifest cannot inherit review appro
   assert.equal(store.get(record.id).phase, "upload-cancelled");
   assert.equal(store.get(record.id).uploadApproval, null);
 });
+
+test("a competing start cannot replace the baseline of the approved upload", async (t) => {
+  const { root, store, record } = await association(t);
+  let ready;
+  const prompt = new Promise((resolve) => {
+    ready = resolve;
+  });
+  const firstIO = terminal(() => ready());
+  const first = captureAndApproveUpload(store, record, firstIO);
+  await prompt;
+  const firstDigest = store.get(record.id).baselineDigest;
+  write(root, "source", "unapproved competing bytes\n");
+  const second = captureAndApproveUpload(
+    store,
+    record,
+    terminal((input) => input.end()),
+  ).then(
+    () => null,
+    (error) => error,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  firstIO.input.write(`UPLOAD ${firstDigest}\n`);
+  const approved = await first;
+  assert.equal((await second).code, "upload_already_reviewed");
+  assert.equal(store.get(record.id).baselineDigest, approved.digest);
+  assert.equal(
+    readSnapshot(store.get(record.id).baseline).digest,
+    approved.digest,
+  );
+});

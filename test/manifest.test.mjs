@@ -74,6 +74,43 @@ test("mandatory exclusions cannot be overridden and escaping paths fail", () => 
   for (const p of ["/tmp/x", "a/../../x", "a/./b", "a\\b", ""])
     assert.throws(() => pathExclusionReason(p, c));
 });
+
+test("additional exclusions support directory wildcards and extensions without weakening mandatory filters", (t) => {
+  const root = repository(t),
+    config = validateConfig({
+      excludedPaths: ["private/**", "*.log", "local/only"],
+    });
+  for (const name of [
+    "source.mjs",
+    "private/source.mjs",
+    "deep/run.log",
+    "local/only",
+    ".env.example",
+  ])
+    write(root, name, "fixture\n");
+  const snapshot = captureSnapshot(
+    root,
+    config,
+    path.join(temporary(t), "snapshot"),
+  );
+  assert.deepEqual(
+    snapshot.files.map((file) => file.path),
+    ["source.mjs"],
+  );
+  assert.equal(pathExclusionReason("private-other/source.mjs", config), null);
+  for (const pattern of [
+    "*",
+    "**/*.log",
+    "a/*",
+    "../**",
+    "*.",
+    "a/*.log",
+    "a/**/b",
+  ])
+    assert.throws(() => validateConfig({ excludedPaths: [pattern] }), {
+      code: "invalid_config",
+    });
+});
 test("snapshot bounds and file replacement are fail closed", (t) => {
   const root = repository(t);
   write(root, "a", "12345");

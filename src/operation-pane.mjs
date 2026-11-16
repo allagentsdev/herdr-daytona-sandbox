@@ -54,7 +54,7 @@ await runPane(process.env.DAYTONA_OPERATION ?? "status", async () => {
     const result = await stopAssociation(store, r.id, provider);
     emitResult("stop", result.status, result);
     show(
-      "Compute stopped. Sandbox files and recovery metadata are retained; reconnect starts the agent again.",
+      "Compute stopped. Sandbox files and recovery metadata are retained. Prepared workspaces can reconnect; interrupted setup still requires recovery.",
     );
     await dismiss();
     return;

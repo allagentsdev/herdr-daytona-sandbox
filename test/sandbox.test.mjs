@@ -34,6 +34,51 @@ test("provider creates persistent EU sandbox using the exact stable SDK shape", 
   assert.equal(params.envVars, undefined);
 });
 
+test("provision requires approval of its exact baseline and destination before allocation", async (t) => {
+  const root = repository(t),
+    store = new Store(temporary(t)),
+    config = validateConfig({});
+  write(root, "source", "approved bytes");
+  for (const approval of [
+    null,
+    { digest: "wrong", destination: config.remoteRoot },
+    { digest: "correct", destination: "/workspace/other" },
+  ]) {
+    const id = randomUUID(),
+      snapshot = captureSnapshot(
+        root,
+        config,
+        path.join(store.artifacts(id), "baseline"),
+      );
+    await store.create({
+      id,
+      namespace: "n",
+      localRoot: root,
+      phase: "upload-approved",
+      config,
+      baseline: snapshot.directory,
+      baselineDigest: snapshot.digest,
+      uploadApproval:
+        approval?.digest === "correct"
+          ? { ...approval, digest: snapshot.digest }
+          : approval,
+    });
+    let creates = 0;
+    await assert.rejects(
+      provision(store, id, {
+        create: async () => {
+          creates++;
+          throw Error("must not allocate");
+        },
+      }),
+      { code: "upload_review_required" },
+    );
+    assert.equal(creates, 0);
+    assert.equal(store.get(id).creationAttempted, undefined);
+    assert.equal(store.get(id).phase, "failed");
+  }
+});
+
 test("real preparation orchestration transfers bytes/modes and creates an empty invoking cwd for every adapter", async (t) => {
   for (const agent of ["codex", "claude-code", "opencode", "pi"]) {
     const root = repository(t),
@@ -58,6 +103,10 @@ test("real preparation orchestration transfers bytes/modes and creates an empty 
       phase: "provisional",
       baseline: snapshot.directory,
       baselineDigest: snapshot.digest,
+      uploadApproval: {
+        digest: snapshot.digest,
+        destination: config.remoteRoot,
+      },
     });
     const remote = temporary(t),
       workspace = path.join(remote, "workspace"),
@@ -163,6 +212,10 @@ test("custom preparation executes configured commands only remotely and enforces
       phase: "provisional",
       baseline: snapshot.directory,
       baselineDigest: snapshot.digest,
+      uploadApproval: {
+        digest: snapshot.digest,
+        destination: config.remoteRoot,
+      },
     });
     const commands = [];
     const box = {
@@ -219,6 +272,7 @@ test("creation ID is durable before setup fails; retry never allocates another s
     phase: "provisional",
     baseline: snapshot.directory,
     baselineDigest: snapshot.digest,
+    uploadApproval: { digest: snapshot.digest, destination: config.remoteRoot },
   });
   let creates = 0;
   const provider = {

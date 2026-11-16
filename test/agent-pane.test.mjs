@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { randomUUID } from "node:crypto";
 import { attachAgent } from "../src/terminal.mjs";
+import { forgetAssociation, stopAssociation } from "../src/actions.mjs";
 import { Store } from "../src/state.mjs";
 import { validateConfig } from "../src/config.mjs";
 import { temporary } from "./helpers.mjs";
@@ -272,4 +273,173 @@ test("failed agent exit and unresolved transport loss are reported after termina
     assert.equal(disconnected, true);
     assert.equal(store.get(id).phase, "detached");
   }
+});
+
+test("forgetting an attached sandbox cleans up its terminal without recreating the removed record", async (t) => {
+  const store = new Store(temporary(t)),
+    id = randomUUID();
+  await store.create({
+    id,
+    namespace: "n",
+    localRoot: "/tmp",
+    relativeCwd: ".",
+    phase: "ready",
+    sandboxId: "box",
+    config: validateConfig({}),
+  });
+  let exit,
+    raw = false,
+    disconnected = false;
+  const exited = new Promise((resolve) => {
+    exit = resolve;
+  });
+  const handle = {
+    sendInput: async () => {},
+    resize: async () => {},
+    disconnect: async () => {
+      disconnected = true;
+    },
+    wait: () => exited,
+  };
+  const box = { state: "started", process: { createPty: async () => handle } };
+  const provider = {
+    get: async () => box,
+    resume: async () => box,
+    environment: () => ({}),
+    delete: async () => {},
+  };
+  const input = new PassThrough();
+  input.isTTY = true;
+  input.setRawMode = (value) => {
+    raw = value;
+  };
+  const attached = attachAgent(store, id, provider, {
+    input,
+    output: new PassThrough(),
+    signals: new EventEmitter(),
+  });
+  while (!raw) await new Promise((resolve) => setImmediate(resolve));
+  await forgetAssociation(store, id, "box", provider);
+  exit({ exitCode: 0 });
+  await attached;
+  assert.equal(raw, false);
+  assert.equal(disconnected, true);
+  assert.throws(() => store.get(id), { code: "ENOENT" });
+});
+
+test("old terminal teardown cannot detach a newer connection to the same live PTY", async (t) => {
+  const store = new Store(temporary(t)),
+    id = randomUUID();
+  await store.create({
+    id,
+    namespace: "n",
+    localRoot: "/tmp",
+    relativeCwd: ".",
+    phase: "ready",
+    sandboxId: "box",
+    config: validateConfig({}),
+  });
+  const handle = () => ({
+    sendInput: async () => {},
+    resize: async () => {},
+    disconnect: async () => {},
+    wait: () => new Promise(() => {}),
+  });
+  const box = {
+    state: "started",
+    process: {
+      createPty: async () => handle(),
+      connectPty: async () => handle(),
+      getPtySessionInfo: async () => ({ active: true }),
+    },
+  };
+  const provider = {
+    get: async () => box,
+    resume: async () => box,
+    environment: () => ({}),
+  };
+  const io = () => {
+    const input = new PassThrough();
+    input.isTTY = true;
+    input.setRawMode = (value) => {
+      input.isRaw = value;
+    };
+    return { input, output: new PassThrough(), signals: new EventEmitter() };
+  };
+  const firstIO = io(),
+    first = attachAgent(store, id, provider, firstIO);
+  while (!firstIO.input.isRaw)
+    await new Promise((resolve) => setImmediate(resolve));
+  const secondIO = io(),
+    second = attachAgent(store, id, provider, secondIO);
+  while (!secondIO.input.isRaw)
+    await new Promise((resolve) => setImmediate(resolve));
+  firstIO.signals.emit("SIGTERM");
+  await first;
+  const phase = store.get(id).phase;
+  secondIO.signals.emit("SIGTERM");
+  await second;
+  assert.equal(phase, "connected");
+  assert.equal(store.get(id).phase, "detached");
+});
+
+test("manual stop during attachment retains stopped state and reconnect launches one fresh PTY", async (t) => {
+  const store = new Store(temporary(t)),
+    id = randomUUID();
+  await store.create({
+    id,
+    namespace: "n",
+    localRoot: "/tmp",
+    relativeCwd: ".",
+    phase: "ready",
+    sandboxId: "box",
+    config: validateConfig({}),
+  });
+  let exit,
+    creates = 0,
+    raw = false;
+  const exited = new Promise((resolve) => {
+    exit = resolve;
+  });
+  const box = {
+    state: "started",
+    stop: async () => {
+      box.state = "stopped";
+      exit({ exitCode: 137 });
+    },
+    process: {
+      createPty: async () => {
+        creates++;
+        return {
+          sendInput: async () => {},
+          resize: async () => {},
+          disconnect: async () => {},
+          wait: () =>
+            creates === 1 ? exited : Promise.resolve({ exitCode: 0 }),
+        };
+      },
+    },
+  };
+  const provider = {
+    get: async () => box,
+    resume: async () => {
+      box.state = "started";
+    },
+    environment: () => ({}),
+  };
+  const input = new PassThrough();
+  input.isTTY = true;
+  input.setRawMode = (value) => {
+    raw = value;
+  };
+  const io = { input, output: new PassThrough(), signals: new EventEmitter() };
+  const first = attachAgent(store, id, provider, io);
+  while (!raw) await new Promise((resolve) => setImmediate(resolve));
+  await stopAssociation(store, id, provider);
+  await first;
+  assert.equal(store.get(id).phase, "stopped");
+  assert.equal(raw, false);
+  await attachAgent(store, id, provider, io);
+  assert.equal(creates, 2);
+  assert.equal(store.get(id).phase, "detached");
 });

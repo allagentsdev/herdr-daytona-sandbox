@@ -235,6 +235,11 @@ async function deleteLocked(store, id, confirmation, provider) {
 export async function stopAssociation(store, id, provider) {
   return store.withLock(id, async () => {
     const r = store.get(id);
+    const previousPhase =
+      r.phase === "stopping" ? (r.stopPreviousPhase ?? "failed") : r.phase;
+    const prepared = ["ready", "connected", "detached", "stopped"].includes(
+      previousPhase,
+    );
     if (!r.sandboxId)
       throw new PluginError(
         "provider_missing",
@@ -252,7 +257,11 @@ export async function stopAssociation(store, id, provider) {
         `Cannot stop sandbox in state ${box.state}. Inspect status before retrying.`,
       );
     if (box.state === "started") {
-      await store.update(id, (v) => ({ ...v, phase: "stopping" }));
+      await store.update(id, (v) => ({
+        ...v,
+        phase: "stopping",
+        stopPreviousPhase: previousPhase,
+      }));
       await providerCall(() => box.stop(r.config.createTimeoutSeconds));
     }
     const after = await provider.get(r.sandboxId);
@@ -263,10 +272,11 @@ export async function stopAssociation(store, id, provider) {
       );
     await store.update(id, (v) => ({
       ...v,
-      phase: "stopped",
+      phase: prepared ? "stopped" : previousPhase,
+      stopPreviousPhase: null,
       ptyId: null,
       ptyPhase: null,
-      lastError: null,
+      lastError: prepared ? null : v.lastError,
     }));
     return {
       status: "stopped",

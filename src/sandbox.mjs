@@ -378,7 +378,7 @@ export async function provision(store, id, provider, onPhase = () => {}) {
           );
         }
       } else {
-        readSnapshot(r.baseline);
+        approvedSnapshot(r);
         await store.update(id, (v) => ({
           ...v,
           phase: "creating",
@@ -392,7 +392,7 @@ export async function provision(store, id, provider, onPhase = () => {}) {
         sandboxId: sandbox.id,
         phase: "created",
       }));
-      const snapshot = readSnapshot(r.baseline);
+      const snapshot = approvedSnapshot(r);
       const installedVersion = await provider.prepare(
         sandbox,
         r,
@@ -415,15 +415,31 @@ export async function provision(store, id, provider, onPhase = () => {}) {
       await store.update(id, (v) => ({
         ...v,
         phase:
-          v.phase === "creation-uncertain"
-            ? "creation-uncertain"
-            : v.sandboxId
-              ? "failed"
-              : "creation-uncertain",
+          v.sandboxId || !v.creationAttempted ? "failed" : "creation-uncertain",
         lastError: errorMessage(e),
       }));
       throw e;
     }
   });
+}
+function approvedSnapshot(record) {
+  if (
+    !record.uploadApproval ||
+    record.uploadApproval.destination !== record.config.remoteRoot
+  )
+    throw new PluginError(
+      "upload_review_required",
+      "Review and approve this exact upload before provisioning. No unapproved files will be uploaded.",
+    );
+  const snapshot = readSnapshot(record.baseline);
+  if (
+    snapshot.digest !== record.uploadApproval.digest ||
+    snapshot.digest !== record.baselineDigest
+  )
+    throw new PluginError(
+      "upload_review_required",
+      "The retained baseline does not match the approved upload. Start again and review a fresh snapshot.",
+    );
+  return snapshot;
 }
 export const newPtyId = () => `herdr-${randomUUID()}`;
