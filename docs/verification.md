@@ -23,7 +23,9 @@ installed into a Daytona sandbox and are not evidence of interactive support.
 ## Automated local checks
 
 - `npm ci` followed by `npm run check`: pass on Linux with 35 tests, Prettier,
-  ESLint and manifest verification. macOS CI remains pending publication.
+  ESLint and manifest verification. GitHub Actions runs the same check with
+  Node 22 on Linux and macOS; see the [implementation PR checks](https://github.com/allagentsdev/herdr-daytona-sandbox/pull/2/checks)
+  for current automation results. Interactive macOS acceptance remains open.
 - Dependency installation from the public npm registry succeeded with zero npm
   audit findings. The host's unrelated configured npm registry was unreachable.
 - Node tests cover config/auth opt-in, context selection, state concurrency and
@@ -40,7 +42,8 @@ installed into a Daytona sandbox and are not evidence of interactive support.
 - SDK-shaped local transport tests exercise the full successful preparation path
   for all four adapters: binary upload, executable modes, Git initialization,
   installed-version recording, and an empty invoking subdirectory. Agent package
-  installation is stubbed; these are not real agent startup checks.
+  installation and remote Linux platform identity are stubbed; these are not
+  real agent startup checks.
 - Separate Node processes verify mutual exclusion and atomic state updates after
   a dead lock owner. Regressions cover replacement lock owners, non-overlapping
   local edits, interruption before/after patch writes, complete exclusion

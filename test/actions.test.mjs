@@ -42,7 +42,7 @@ test("start validates before opening a progress pane and captures source context
     "start-agent",
     {},
     {
-      env: { ...env, DAYTONA_API_KEY: "private" },
+      env: { ...env, DAYTONA_API_KEY: "fixture-control-key-not-for-state" },
       store,
       context,
       openPane: (...args) => {
@@ -54,7 +54,10 @@ test("start validates before opening a progress pane and captures source context
   assert.equal(opened[2].focus, false);
   assert.equal(opened[2].targetPaneId, "w1:p1");
   assert.equal(store.get(result.association).localRoot, root);
-  assert.doesNotMatch(JSON.stringify(store.list()), /private/);
+  assert.doesNotMatch(
+    JSON.stringify(store.list()),
+    /fixture-control-key-not-for-state/,
+  );
 });
 test("unassociated reconnect requires selection, even for one retained record", async (t) => {
   const store = new Store(temporary(t)),

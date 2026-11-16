@@ -63,6 +63,7 @@ test("real preparation orchestration transfers bytes/modes and creates an empty 
       workspace = path.join(remote, "workspace"),
       bin = path.join(remote, "bin");
     fs.mkdirSync(bin);
+    write(bin, "uname", "#!/bin/sh\nprintf '%s\\n' Linux\n", 0o755);
     const map = (p) => p.replace(config.remoteRoot, workspace);
     let installs = 0;
     const box = {
