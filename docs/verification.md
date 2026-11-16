@@ -22,7 +22,7 @@ the configurations below; they do not establish every possible model or image.
 `npm ci` and `npm run check` pass locally. The current suite has **65 tests**,
 plus Prettier, ESLint and manifest checks. GitHub Actions runs clean installation
 and the same check with Node 22 on Linux and macOS; consult the
-[PR checks](https://github.com/allagentsdev/herdr-daytona-sandbox/pull/2/checks)
+[PR checks](https://github.com/allagentsdev/herdr-daytona-sandbox-plugin/pull/2/checks)
 for the result at the published commit. CI is not interactive macOS evidence.
 
 Tests use real disposable Git repositories for dirty linked-worktree capture,
@@ -46,6 +46,10 @@ fixed with regression coverage. The attempted external Claude review failed at
 transport before prompt egress; it is not counted as cross-model evidence.
 
 ## Herdr installation
+
+The repository was renamed to `allagentsdev/herdr-daytona-sandbox-plugin` on
+2026-11-17. Commands recorded below use the name that existed when they ran.
+New installations use the name in the README.
 
 Isolated Linux sessions using Herdr **0.8.0** and **0.9.5** passed plugin linking,
 action listing, config-directory lookup, missing-auth execution, and GitHub/ref
