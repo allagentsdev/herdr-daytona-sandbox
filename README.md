@@ -1,7 +1,7 @@
 # Daytona Sandbox for Herdr
 
-[![CI](https://github.com/allagentsdev/herdr-daytona-sandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/allagentsdev/herdr-daytona-sandbox/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/allagentsdev/herdr-daytona-sandbox)](LICENSE)
+[![CI](https://github.com/allagentsdev/herdr-daytona-sandbox-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/allagentsdev/herdr-daytona-sandbox-plugin/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/allagentsdev/herdr-daytona-sandbox-plugin)](LICENSE)
 
 Run Claude Code, Codex, OpenCode or Pi in a persistent Daytona Linux sandbox
 without leaving Herdr.
@@ -19,7 +19,7 @@ binaries and the Daytona CLI are unnecessary.
 Install the plugin:
 
 ```sh
-herdr plugin install allagentsdev/herdr-daytona-sandbox
+herdr plugin install allagentsdev/herdr-daytona-sandbox-plugin
 ```
 
 Then:
