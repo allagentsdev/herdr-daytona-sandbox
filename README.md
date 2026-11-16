@@ -4,9 +4,10 @@ Run Claude Code, Codex, OpenCode, or Pi in a persistent Daytona Linux sandbox
 from a Herdr pane. Upload a filtered snapshot of a Git worktree, reconnect to its
 saved workspace, then review and explicitly approve remote changes locally.
 
-**Implementation under verification.** Local checks and Linux Herdr linking are
-recorded in [verification](docs/verification.md). Real Daytona and interactive
-agent lifecycle checks remain open; this is not yet a verified cloud release.
+**Implementation under verification.** Local checks and real Linux Daytona
+provisioning, reconnect, persistence and patch checks are recorded in
+[verification](docs/verification.md). Authenticated agent work and the remaining
+agent/platform matrix are open; this is not yet a verified cloud release.
 
 ## Install
 
