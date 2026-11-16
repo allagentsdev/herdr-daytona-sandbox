@@ -10,7 +10,10 @@ export function namespace(env = process.env) {
     .update(
       JSON.stringify([
         env.HERDR_SOCKET_PATH ?? env.HERDR_SOCKET ?? "",
-        env.HERDR_SESSION ?? env.HERDR_SESSION_NAME ?? "default",
+        env.HERDR_SESSION ??
+          env.HERDR_SESSION_NAME ??
+          env.HERDR_REMOTE_SESSION ??
+          "default",
       ]),
     )
     .digest("hex");
