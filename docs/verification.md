@@ -69,6 +69,7 @@ session was not changed.
 | `plugin config-dir daytona.sandbox`                                           | Pass    | Pass    |
 | Live server lists exactly five plugin actions                                 | Pass    | Pass    |
 | Start action emits redacted versioned `missing_auth` result before allocation | Pass    | Pass    |
+| GitHub review-branch install runs the production dependency hook              | Pass    | Pass    |
 | Actual provider/agent pane attachment                                         | Not run | Not run |
 
 The first isolated test path exceeded Unix socket path length limits. Shorter
@@ -79,7 +80,11 @@ spaces (169 dependencies; npm audit: zero findings). Both Herdr versions linked
 that path, and its runtime dispatcher emitted `missing_auth` from an unrelated
 cwd with production dependencies only.
 
-GitHub review-branch installation is checked after publication. Default-branch install
+GitHub installation passed on both versions with
+`plugin install allagentsdev/herdr-daytona-sandbox --ref feat/daytona-sandbox --yes`,
+using fresh isolated configuration directories. Both installed implementation
+commit `6331133c1f6dea2cdc393b2f8aa90f0600dfdf40` and registered five actions,
+four pane entrypoints and the retention event. Default-branch install
 cannot be verified until this implementation is merged; no merge is authorized
 by this work.
 
