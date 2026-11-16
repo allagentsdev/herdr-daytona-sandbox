@@ -107,3 +107,41 @@ test("snapshot bounds and file replacement are fail closed", (t) => {
     { code: "snapshot_race" },
   );
 });
+
+test("valid nested repositories and submodule entries are skipped; empty worktrees remain valid", (t) => {
+  const root = repository(t),
+    directory = temporary(t);
+  const empty = captureSnapshot(
+    root,
+    validateConfig({}),
+    path.join(directory, "empty"),
+  );
+  assert.deepEqual(empty.files, []);
+  const nested = path.join(root, "nested");
+  fs.mkdirSync(nested);
+  git(nested, ["init", "-q"]);
+  write(nested, "source", "private nested source");
+  write(root, "top", "source");
+  git(root, ["add", "top"]);
+  git(root, ["commit", "-qm", "top"]);
+  const oid = git(root, ["rev-parse", "HEAD"]).stdout.trim();
+  git(root, [
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `160000,${oid},submodule`,
+  ]);
+  fs.mkdirSync(path.join(root, "submodule"));
+  write(root, "submodule/file", "submodule data");
+  const snapshot = captureSnapshot(
+    root,
+    validateConfig({}),
+    path.join(directory, "nested"),
+  );
+  assert.deepEqual(
+    snapshot.files.map((f) => f.path),
+    ["top"],
+  );
+  assert.ok(snapshot.excluded.some((f) => f.path === "nested"));
+  assert.ok(snapshot.excluded.some((f) => f.path === "submodule"));
+});

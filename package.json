@@ -14,7 +14,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "verify:manifest": "node scripts/verify-manifest.mjs",
-    "test": "node --test"
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@daytona/sdk": "0.231.1"

@@ -247,12 +247,20 @@ export function captureSnapshot(root, c, directory) {
       "Non-UTF-8 filenames are unsupported.",
     );
   const candidates = [
-    ...new Set(raw.toString("utf8").split("\0").filter(Boolean)),
+    ...new Set(
+      raw
+        .toString("utf8")
+        .split("\0")
+        .filter(Boolean)
+        .map((p) => p.replace(/\/$/, "")),
+    ),
   ].sort();
-  const ignored = git(root, ["check-ignore", "--no-index", "-z", "--stdin"], {
-    input: `${candidates.join("\0")}\0`,
-    check: false,
-  });
+  const ignored = candidates.length
+    ? git(root, ["check-ignore", "--no-index", "-z", "--stdin"], {
+        input: `${candidates.join("\0")}\0`,
+        check: false,
+      })
+    : { status: 1, stdout: "" };
   if (![0, 1].includes(ignored.status))
     throw new PluginError(
       "snapshot_inventory",

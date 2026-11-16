@@ -10,9 +10,10 @@ import { DaytonaProvider } from "./sandbox.mjs";
 import { PluginError } from "./result.mjs";
 
 export function selectAssociation(store, context, env = process.env, explicit) {
+  const scope = namespace(env);
   if (explicit) {
     const r = store.get(explicit);
-    if (r.namespace !== namespace(env))
+    if (r.namespace !== scope)
       throw new PluginError(
         "association_scope",
         "Association belongs to another Herdr server/session.",
@@ -24,7 +25,7 @@ export function selectAssociation(store, context, env = process.env, explicit) {
     .list()
     .filter(
       (r) =>
-        r.namespace === namespace(env) &&
+        r.namespace === scope &&
         r.remotePaneId === pane &&
         (!context.workspace_id || r.workspaceId === context.workspace_id) &&
         r.phase !== "deleted",
@@ -37,6 +38,7 @@ export function selectAssociation(store, context, env = process.env, explicit) {
   return matches[0] ?? null;
 }
 export function candidates(store, context, env = process.env) {
+  const scope = namespace(env);
   let root;
   try {
     root = resolveGitContext(context).root;
@@ -47,7 +49,7 @@ export function candidates(store, context, env = process.env) {
     .list()
     .filter(
       (r) =>
-        r.namespace === namespace(env) &&
+        r.namespace === scope &&
         r.phase !== "deleted" &&
         (!root || r.localRoot === root),
     );
@@ -207,6 +209,7 @@ export async function worktreeRemoved(
   openPane = openPluginPane,
 ) {
   const data = event.data;
+  const scope = namespace(env);
   if (
     data?.type !== "worktree_removed" ||
     typeof data.worktree?.path !== "string"
@@ -219,7 +222,7 @@ export async function worktreeRemoved(
     .list()
     .filter(
       (r) =>
-        r.namespace === namespace(env) &&
+        r.namespace === scope &&
         r.localRoot === data.worktree.path &&
         r.workspaceId === data.workspace_id &&
         r.phase !== "deleted",
@@ -239,7 +242,7 @@ export async function worktreeRemoved(
           },
         );
       } catch {
-        /* Retained state remains available through status. */
+        continue;
       }
     }
   }

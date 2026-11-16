@@ -273,7 +273,27 @@ export async function preparePatch(store, id, provider) {
   });
 }
 export function reviewText(candidate) {
-  return `Destination: ${candidate.destination}\nAssociation: ${candidate.association}\nArtifact: ${candidate.artifact}\nSHA-256: ${candidate.digest}\nChanged paths:\n${candidate.changedPaths.map((p) => JSON.stringify(p)).join("\n")}\n\n${safeText(fs.readFileSync(candidate.patchPath, "utf8"))}`;
+  const bytes = fs.readFileSync(candidate.patchPath);
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    text = Array.from(bytes, (b) =>
+      b >= 128
+        ? `\\x${b.toString(16).padStart(2, "0")}`
+        : String.fromCharCode(b),
+    ).join("");
+  }
+  const escaped = text.replace(
+    // eslint-disable-next-line no-control-regex -- Display untrusted bytes visibly rather than executing or hiding them.
+    /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g,
+    (c) =>
+      `${c.charCodeAt(0) <= 255 ? "\\x" : "\\u"}${c
+        .charCodeAt(0)
+        .toString(16)
+        .padStart(c.charCodeAt(0) <= 255 ? 2 : 4, "0")}`,
+  );
+  return `Destination: ${JSON.stringify(candidate.destination)}\nAssociation: ${candidate.association}\nArtifact: ${candidate.artifact}\nSHA-256: ${candidate.digest}\nChanged paths:\n${candidate.changedPaths.map((p) => JSON.stringify(p)).join("\n")}\n\n${safeText(escaped)}`;
 }
 export async function applyReviewedPatch(store, id, artifact, expectedDigest) {
   return store.withLock(id, async () => {

@@ -12,6 +12,7 @@ import {
 } from "./manifest.mjs";
 import { shellQuote } from "./process.mjs";
 import { PluginError, errorMessage } from "./result.mjs";
+import { PLUGIN_ID } from "./constants.mjs";
 
 export function missing(error) {
   return error?.statusCode === 404 || error?.response?.status === 404;
@@ -60,7 +61,7 @@ export class DaytonaProvider {
           target: c.region,
           labels: {
             "herdr-operation": record.id,
-            "herdr-plugin": "daytona.sandbox",
+            "herdr-plugin": PLUGIN_ID,
           },
           ephemeral: false,
           autoStopInterval: c.autoStopInterval,
@@ -76,7 +77,7 @@ export class DaytonaProvider {
     return providerCall(async () => {
       const matches = [];
       for await (const s of this.client.list({
-        labels: { "herdr-operation": id, "herdr-plugin": "daytona.sandbox" },
+        labels: { "herdr-operation": id, "herdr-plugin": PLUGIN_ID },
       })) {
         if (s.labels?.["herdr-operation"] === id) matches.push(s);
         if (matches.length > 1)
@@ -133,7 +134,6 @@ export class DaytonaProvider {
       'set -eu; test "$(uname -s)" = Linux; command -v bash; command -v git; command -v node; command -v npm; test "$(node -p \'Number(process.versions.node.split(".")[0])>=22\')" = true',
       "/",
     );
-    // Reconciliation can resume interrupted setup, but never overwrite an existing uploaded workspace.
     if (record.phase !== "created")
       throw new PluginError(
         "setup_incomplete",
@@ -248,7 +248,7 @@ export class DaytonaProvider {
       ]) {
         await providerCall(() =>
           sandbox.fs.uploadFile(
-            Buffer.from(fs.readFileSync(new URL(`./${name}`, import.meta.url))),
+            fs.readFileSync(new URL(`./${name}`, import.meta.url)),
             `${tools}/${name}`,
             c.execTimeoutSeconds,
           ),

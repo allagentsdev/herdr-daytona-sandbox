@@ -1,4 +1,3 @@
-// Executed inside Daytona. Output is untrusted and validated again by the local provider.
 import fs from "node:fs";
 import path from "node:path";
 import {
