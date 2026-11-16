@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
-import { Store, namespace } from "../src/state.mjs";
+import { Store, namespace, atomicJson } from "../src/state.mjs";
 import { validateConfig } from "../src/config.mjs";
 import {
   stopAssociation,
@@ -160,4 +160,70 @@ test("stopping interrupted setup does not make an unprepared workspace reconnect
   await stopAssociation(store, id, { get: async () => box });
   assert.equal(store.get(id).phase, "failed");
   assert.equal(store.get(id).lastError, "Agent installation failed.");
+});
+
+test("forget waits for an existing state writer before removing its association", async (t) => {
+  const { store, id } = await association(t);
+  let release, signal, writer;
+  const blocked = new Promise((resolve) => {
+    release = resolve;
+  });
+  const locked = new Promise((resolve) => {
+    signal = resolve;
+  });
+  const update = store.update.bind(store);
+  store.update = async (...args) => {
+    const record = await update(...args);
+    if (record.phase === "deleted") {
+      writer = store.withLock(
+        id,
+        async () => {
+          signal();
+          await blocked;
+          atomicJson(store.file(id), record);
+        },
+        { suffix: "state" },
+      );
+      await locked;
+    }
+    return record;
+  };
+  const forgetting = forgetAssociation(store, id, "exact-box", {
+    get: async () => null,
+  });
+  await locked;
+  await new Promise((resolve) => setImmediate(resolve));
+  const presentWhileWriting = fs.existsSync(store.file(id));
+  release();
+  await writer;
+  await forgetting;
+  assert.equal(presentWhileWriting, true);
+  assert.equal(fs.existsSync(store.file(id)), false);
+});
+
+test("uncertain stop retry preserves whether setup was prepared", async (t) => {
+  for (const phase of ["ready", "failed"]) {
+    const { store, id } = await association(t);
+    await store.update(id, (v) => ({
+      ...v,
+      phase,
+      lastError: "Original setup failure.",
+    }));
+    const box = {
+      state: "started",
+      stop: async () => {
+        box.state = "stopped";
+        throw Error("lost response");
+      },
+    };
+    const provider = { get: async () => box };
+    await assert.rejects(stopAssociation(store, id, provider));
+    assert.equal(store.get(id).phase, "stopping");
+    await stopAssociation(store, id, provider);
+    assert.equal(store.get(id).phase, phase === "ready" ? "stopped" : "failed");
+    assert.equal(
+      store.get(id).lastError,
+      phase === "ready" ? null : "Original setup failure.",
+    );
+  }
 });

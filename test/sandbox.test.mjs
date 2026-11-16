@@ -318,3 +318,43 @@ test("uncertain creates reconcile exact labels, without blind recreation", async
   assert.equal(created, false);
   assert.equal(store.get(id).phase, "creation-uncertain");
 });
+
+test("a reconciled creation retains its ID but never uploads a mismatched review", async (t) => {
+  const root = repository(t),
+    store = new Store(temporary(t)),
+    id = randomUUID(),
+    config = validateConfig({});
+  write(root, "source", "unapproved bytes");
+  const snapshot = captureSnapshot(
+    root,
+    config,
+    path.join(store.artifacts(id), "baseline"),
+  );
+  await store.create({
+    id,
+    namespace: "n",
+    localRoot: root,
+    phase: "creation-uncertain",
+    creationAttempted: true,
+    config,
+    baseline: snapshot.directory,
+    baselineDigest: snapshot.digest,
+    uploadApproval: {
+      digest: "another-review",
+      destination: config.remoteRoot,
+    },
+  });
+  let uploads = 0;
+  await assert.rejects(
+    provision(store, id, {
+      reconcile: async () => ({ id: "reconciled-box" }),
+      prepare: async () => {
+        uploads++;
+      },
+    }),
+    { code: "upload_review_required" },
+  );
+  assert.equal(uploads, 0);
+  assert.equal(store.get(id).sandboxId, "reconciled-box");
+  assert.equal(store.get(id).phase, "failed");
+});

@@ -344,13 +344,22 @@ export async function replaceAssociation(
 export async function forgetAssociation(store, id, confirmation, provider) {
   return store.withLock(id, async () => {
     const deleted = await deleteLocked(store, id, confirmation, provider);
-    if (store.get(id).phase !== "deleted")
-      throw new PluginError(
-        "deletion_uncertain",
-        "Deletion is not confirmed. Recovery metadata is retained.",
-      );
-    fs.rmSync(path.join(store.directory, id), { recursive: true, force: true });
-    fs.unlinkSync(store.file(id));
+    await store.withLock(
+      id,
+      async () => {
+        if (store.get(id).phase !== "deleted")
+          throw new PluginError(
+            "deletion_uncertain",
+            "Deletion is not confirmed. Recovery metadata is retained.",
+          );
+        fs.rmSync(path.join(store.directory, id), {
+          recursive: true,
+          force: true,
+        });
+        fs.unlinkSync(store.file(id));
+      },
+      { suffix: "state" },
+    );
     return { ...deleted, status: "forgotten" };
   });
 }
