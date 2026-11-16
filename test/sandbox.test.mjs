@@ -124,6 +124,81 @@ test("real preparation orchestration transfers bytes/modes and creates an empty 
     assert.equal(ready.checkpoint, snapshot.directory);
   }
 });
+test("custom preparation executes configured commands only remotely and enforces expected version", async (t) => {
+  for (const [reported, succeeds] of [
+    ["My Agent 1.2.3", true],
+    ["My Agent 11.2.30", false],
+  ]) {
+    const store = new Store(temporary(t)),
+      root = repository(t),
+      id = randomUUID();
+    const config = validateConfig({
+      agent: "my-agent",
+      allowCandidateAgents: true,
+      customAgents: {
+        "my-agent": {
+          title: "My Agent",
+          installationCommand: "install-my-agent 1.2.3",
+          launchCommand: "my-agent",
+          versionCommand: "my-agent version --plain",
+          expectedVersion: "1.2.3",
+          authenticationMode: "device-code",
+          herdrDetectionIdentifier: "generic",
+          interactiveTTY: true,
+          resumeSupported: true,
+        },
+      },
+    });
+    const snapshot = captureSnapshot(
+      root,
+      config,
+      path.join(store.artifacts(id), "baseline"),
+    );
+    await store.create({
+      id,
+      namespace: "n",
+      localRoot: root,
+      relativeCwd: ".",
+      config,
+      phase: "provisional",
+      baseline: snapshot.directory,
+      baselineDigest: snapshot.digest,
+    });
+    const commands = [];
+    const box = {
+      id: `box-${id}`,
+      process: {
+        executeCommand: async (command) => {
+          commands.push(command);
+          return {
+            exitCode: 0,
+            result: command === "my-agent version --plain" ? reported : "",
+          };
+        },
+      },
+    };
+    const provider = new DaytonaProvider({ create: async () => box }, config);
+    if (succeeds) {
+      const record = await provision(store, id, provider);
+      assert.equal(record.installedVersion, reported);
+      assert.equal(record.phase, "ready");
+      await provision(store, id, provider);
+      assert.equal(
+        commands.filter((c) => c === "my-agent version --plain").length,
+        1,
+      );
+    } else {
+      await assert.rejects(provision(store, id, provider), {
+        code: "agent_version",
+      });
+      assert.equal(store.get(id).sandboxId, box.id);
+      assert.equal(store.get(id).phase, "failed");
+    }
+    assert.ok(commands.includes("set -eu\ninstall-my-agent 1.2.3"));
+    assert.ok(commands.includes("my-agent version --plain"));
+    assert.ok(!commands.some((c) => c.startsWith("npm install --global")));
+  }
+});
 test("creation ID is durable before setup fails; retry never allocates another sandbox", async (t) => {
   const store = new Store(temporary(t)),
     root = repository(t),

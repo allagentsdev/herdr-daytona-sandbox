@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import { candidates, runAction } from "./actions.mjs";
+import { candidates, runAction, stopAssociation } from "./actions.mjs";
+import { getAdapter } from "./adapters.mjs";
 import { parsePluginContext } from "./context.mjs";
 import { Store } from "./state.mjs";
 import { DaytonaProvider } from "./sandbox.mjs";
@@ -38,8 +39,24 @@ await runPane(process.env.DAYTONA_OPERATION ?? "status", async () => {
       return;
     }
   }
-  if (operation === "delete-sandbox") {
-    await confirmDeletion(store, paneAssociation(store).record);
+  if (
+    ["delete-sandbox", "replace-sandbox", "forget-mapping"].includes(operation)
+  ) {
+    await confirmDeletion(store, paneAssociation(store).record, {
+      operation,
+      context,
+    });
+    return;
+  }
+  if (operation === "stop") {
+    const { record: r } = paneAssociation(store);
+    const provider = await DaytonaProvider.connect(r.config, store);
+    const result = await stopAssociation(store, r.id, provider);
+    emitResult("stop", result.status, result);
+    show(
+      "Compute stopped. Sandbox files and recovery metadata are retained; reconnect starts the agent again.",
+    );
+    await dismiss();
     return;
   }
   if (operation === "apply-changes") {
@@ -73,6 +90,7 @@ await runPane(process.env.DAYTONA_OPERATION ?? "status", async () => {
     ? [paneAssociation(store).record]
     : candidates(store, context);
   for (const r of list) {
+    const adapter = getAdapter(r.config.agent, r.config);
     let state = "unknown";
     try {
       const p = await DaytonaProvider.connect(r.config, store);
@@ -90,7 +108,7 @@ await runPane(process.env.DAYTONA_OPERATION ?? "status", async () => {
       state = errorMessage(e);
     }
     show(
-      `Association: ${r.id}\nSandbox: ${r.sandboxId ?? "unresolved"}\nAgent/version: ${r.config.agent} ${r.installedVersion ?? "unverified"}\nLocal: ${r.localRoot} (${fs.existsSync(r.localRoot) ? "present" : "missing"})\nPhase: ${r.phase}\nProvider: ${state}\nPane: ${r.remotePaneId ?? "none"} (last associated; may be disconnected)\nOrphaned: ${Boolean(r.orphaned)}\nLast error: ${r.lastError ?? "none"}\n`,
+      `Association: ${r.id}\nSandbox: ${r.sandboxId ?? "unresolved"}\nAgent/version: ${r.config.agent} ${r.installedVersion ?? "unverified"}\nAdapter: ${adapter.supportLevel ?? "pinned builtin; see verification record"}\nAuthentication: ${adapter.authenticationMode ?? "agent-managed"}\nTTY/resume: ${adapter.interactiveTTY ?? true}/${adapter.resumeSupported ?? true}\nLocal: ${r.localRoot} (${fs.existsSync(r.localRoot) ? "present" : "missing"})\nPhase: ${r.phase}\nProvider: ${state}\nPane: ${r.remotePaneId ?? "none"} (last associated; may be disconnected)\nOrphaned: ${Boolean(r.orphaned)}\nLast error: ${r.lastError ?? "none"}\n`,
     );
   }
   if (!list.length) show("No retained associations for this context.");

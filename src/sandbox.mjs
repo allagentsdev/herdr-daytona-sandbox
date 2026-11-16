@@ -127,7 +127,7 @@ export class DaytonaProvider {
   }
   async prepare(sandbox, record, snapshot, onPhase = () => {}) {
     const c = this.config,
-      a = getAdapter(c.agent);
+      a = getAdapter(c.agent, c);
     await onPhase("checking", "Checking Linux tools");
     await this.exec(
       sandbox,
@@ -164,9 +164,16 @@ export class DaytonaProvider {
     await onPhase("preparing", `Installing ${a.kind}`);
     await this.exec(sandbox, installCommand(a), "/");
     const installedVersion = (
-      await this.exec(sandbox, `${shellQuote(a.binary)} --version`, "/")
+      await this.exec(
+        sandbox,
+        a.versionCommand ?? `${shellQuote(a.binary)} --version`,
+        "/",
+      )
     ).trim();
-    if (!installedVersion.includes(a.version))
+    const expectedVersion = a.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (
+      !new RegExp(`(?:^|\\D)${expectedVersion}(?:$|\\D)`).test(installedVersion)
+    )
       throw new PluginError(
         "agent_version",
         "Installed agent version differs from its pinned adapter.",
@@ -242,6 +249,7 @@ export class DaytonaProvider {
         "manifest.mjs",
         "process.mjs",
         "config.mjs",
+        "credentials.mjs",
         "constants.mjs",
         "result.mjs",
         "state.mjs",

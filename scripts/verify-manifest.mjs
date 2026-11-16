@@ -16,6 +16,7 @@ assert.deepEqual(manifest.build, [{ command: ["npm", "ci", "--omit=dev"] }]);
 assert.deepEqual(manifest.panes.map((p) => p.id).sort(), [
   "agent",
   "confirmation",
+  "connect",
   "operation",
   "start",
 ]);
@@ -41,5 +42,5 @@ const pkg = JSON.parse(
 );
 assert.equal(pkg.dependencies["@daytona/sdk"], "0.231.1");
 console.log(
-  "Manifest: five actions, four pane entrypoints, retention event, install hook and pinned SDK verified.",
+  "Manifest: lifecycle actions, five pane entrypoints, retention event, install hook and pinned SDK verified.",
 );

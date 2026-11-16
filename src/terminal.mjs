@@ -12,7 +12,10 @@ export async function attachAgent(
   let handle;
   await store.withLock(id, async () => {
     let r = store.get(id);
-    if (!r.sandboxId || !["ready", "connected", "detached"].includes(r.phase))
+    if (
+      !r.sandboxId ||
+      !["ready", "connected", "detached", "stopped"].includes(r.phase)
+    )
       throw new PluginError(
         "setup_incomplete",
         "This association has no prepared agent workspace. Inspect status; reconnect never reuploads.",
@@ -127,6 +130,12 @@ export async function attachAgent(
       detached,
     ]);
     if (result.detached) return result;
+    if (
+      ["stopping", "stopped", "deleting", "deleted"].includes(
+        store.get(id).phase,
+      )
+    )
+      return { stopped: true };
     if (result.error || !Number.isInteger(result.exitCode))
       throw new PluginError(
         "pty_transport",

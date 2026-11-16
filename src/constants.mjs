@@ -5,5 +5,10 @@ export const ACTIONS = [
   "apply-changes",
   "delete-sandbox",
   "status",
+  "connect-daytona",
+  "stop",
+  "info",
+  "replace-sandbox",
+  "forget-mapping",
 ];
 export const AGENTS = ["codex", "claude-code", "opencode", "pi"];

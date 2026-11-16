@@ -25,21 +25,21 @@ test("start validates before opening a progress pane and captures source context
   };
   const env = { HERDR_SOCKET_PATH: "/isolated", HERDR_PLUGIN_CONFIG_DIR: dir };
   let opened;
-  await assert.rejects(
-    runAction(
-      "start-agent",
-      {},
-      {
-        env,
-        store,
-        context,
-        openPane: () => {
-          throw Error("must not open");
-        },
+  const onboarding = await runAction(
+    "start-agent",
+    {},
+    {
+      env,
+      store,
+      context,
+      openPane: (...args) => {
+        opened = args;
       },
-    ),
-    { code: "missing_auth" },
+    },
   );
+  assert.equal(onboarding.status, "authentication_required");
+  assert.equal(opened[0], "connect");
+  assert.equal(store.list().length, 0);
   const result = await runAction(
     "start-agent",
     {},
@@ -72,7 +72,7 @@ test("start validates before opening a progress pane and captures source context
     encoding: "utf8",
   });
   assert.match(pane.stdout, /Capturing filtered worktree/);
-  assert.match(pane.stdout + pane.stderr, /missing_auth/);
+  assert.match(pane.stdout + pane.stderr, /interactive_required/);
   assert.ok(store.get(result.association).baseline);
 });
 test("unassociated reconnect requires selection, even for one retained record", async (t) => {

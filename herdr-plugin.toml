@@ -39,6 +39,14 @@ contexts = ["workspace", "pane"]
 command = ["node", "src/action.mjs"]
 
 [[panes]]
+id = "connect"
+title = "Connect Daytona account"
+placement = "popup"
+width = "88%"
+height = "80%"
+command = ["node", "src/connect-pane.mjs"]
+
+[[panes]]
 id = "start"
 title = "Start in Daytona"
 placement = "split"
@@ -69,3 +77,33 @@ command = ["node", "src/confirmation-pane.mjs"]
 [[events]]
 on = "worktree.removed"
 command = ["node", "src/worktree-removed.mjs"]
+
+[[actions]]
+id = "connect-daytona"
+title = "Connect Daytona account"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "stop"
+title = "Stop Daytona sandbox"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "info"
+title = "Show Daytona mapping"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "replace-sandbox"
+title = "Replace Daytona sandbox"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]
+
+[[actions]]
+id = "forget-mapping"
+title = "Delete Daytona sandbox and forget mapping"
+contexts = ["workspace", "pane"]
+command = ["node", "src/action.mjs"]

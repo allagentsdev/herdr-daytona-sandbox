@@ -2,10 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { AGENTS } from "./constants.mjs";
 import { PluginError } from "./result.mjs";
+import { readSavedApiKey } from "./credentials.mjs";
 
 export const DEFAULT_CONFIG = Object.freeze({
   agent: "codex",
   agentArgs: [],
+  customAgents: Object.freeze({}),
+  allowCandidateAgents: false,
   region: "eu",
   image: "node:22.22.0-bookworm",
   snapshot: null,
@@ -30,6 +33,49 @@ const invalid = (message) => {
   throw new PluginError("invalid_config", message);
 };
 const literalString = (v) => typeof v === "string" && !v.includes("\0");
+const PROFILE_STRINGS = [
+  "title",
+  "installationCommand",
+  "launchCommand",
+  "versionCommand",
+  "expectedVersion",
+  "authenticationMode",
+  "herdrDetectionIdentifier",
+];
+export function normalizeCustomAgentProfile(kind, profile) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(kind) || AGENTS.includes(kind))
+    invalid(
+      "Custom agent kinds must be lowercase kebab-case and cannot shadow built-in agents.",
+    );
+  if (!profile || typeof profile !== "object" || Array.isArray(profile))
+    invalid("Each custom agent profile must be an object.");
+  if (
+    Object.keys(profile).some(
+      (k) =>
+        ![...PROFILE_STRINGS, "interactiveTTY", "resumeSupported"].includes(k),
+    )
+  )
+    invalid("Unknown custom agent profile field.");
+  for (const key of PROFILE_STRINGS)
+    if (!literalString(profile[key]) || !profile[key].trim())
+      invalid(`Custom agent ${key} must be a nonempty literal string.`);
+  if (
+    !["codex", "claude", "opencode", "pi", "generic"].includes(
+      profile.herdrDetectionIdentifier,
+    )
+  )
+    invalid(
+      "Custom agent herdrDetectionIdentifier must be a supported Herdr detection identity.",
+    );
+  if (profile.interactiveTTY !== true || profile.resumeSupported !== true)
+    invalid("Custom agents must support an interactive TTY and resume.");
+  return Object.freeze({
+    ...profile,
+    title: profile.title.trim(),
+    expectedVersion: profile.expectedVersion.trim(),
+    authenticationMode: profile.authenticationMode.trim(),
+  });
+}
 export function safeRelative(p) {
   return (
     literalString(p) &&
@@ -46,7 +92,26 @@ export function validateConfig(candidate) {
     invalid("Unknown config field.");
   const c = { ...DEFAULT_CONFIG, ...candidate };
   if (candidate.snapshot && !Object.hasOwn(candidate, "image")) c.image = null;
-  if (!AGENTS.includes(c.agent)) invalid("Unsupported agent.");
+  if (typeof c.allowCandidateAgents !== "boolean")
+    invalid("allowCandidateAgents must be boolean.");
+  if (
+    !c.customAgents ||
+    typeof c.customAgents !== "object" ||
+    Array.isArray(c.customAgents)
+  )
+    invalid("customAgents must be an object keyed by agent kind.");
+  c.customAgents = Object.fromEntries(
+    Object.entries(c.customAgents).map(([kind, profile]) => [
+      kind,
+      normalizeCustomAgentProfile(kind, profile),
+    ]),
+  );
+  if (!AGENTS.includes(c.agent) && !Object.hasOwn(c.customAgents, c.agent))
+    invalid("Unsupported agent.");
+  if (Object.hasOwn(c.customAgents, c.agent) && !c.allowCandidateAgents)
+    invalid(
+      "Custom agents are user-provided and unverified; set allowCandidateAgents to true to start one.",
+    );
   for (const k of ["agentArgs", "excludedPaths", "agentEnvAllowlist"])
     if (!Array.isArray(c[k]) || !c[k].every(literalString))
       invalid(`${k} must be an array of literal strings.`);
@@ -152,9 +217,11 @@ export function managementAuth(c, env = process.env) {
   const jwtToken = env[c.jwtTokenEnv],
     organizationId = env[c.organizationIdEnv];
   if (jwtToken && organizationId) return { ...base, jwtToken, organizationId };
+  const saved = readSavedApiKey(c, env);
+  if (saved) return { ...base, apiKey: saved };
   throw new PluginError(
     "missing_auth",
-    "Set the configured Daytona API-key environment variable, or both JWT and organization variables. CLI login alone is not supported.",
+    "Connect a Daytona account through the plugin, set its configured API-key environment variable, or set both JWT and organization variables. CLI login alone is not supported.",
   );
 }
 export function agentEnvironment(c, env = process.env) {

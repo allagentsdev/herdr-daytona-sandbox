@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ACTIONS } from "./constants.mjs";
 import { loadConfig, managementAuth, agentEnvironment } from "./config.mjs";
@@ -6,7 +7,7 @@ import { parsePluginContext, resolveGitContext } from "./context.mjs";
 import { Store, namespace } from "./state.mjs";
 import { openPluginPane } from "./herdr.mjs";
 import { getAdapter } from "./adapters.mjs";
-import { DaytonaProvider } from "./sandbox.mjs";
+import { DaytonaProvider, providerCall } from "./sandbox.mjs";
 import { PluginError } from "./result.mjs";
 
 export function selectAssociation(store, context, env = process.env, explicit) {
@@ -74,9 +75,20 @@ export async function runAction(action, args = {}, options = {}) {
       DAYTONA_OPERATION: action,
     },
   };
+  if (action === "info") action = "status";
+  if (action === "connect-daytona") {
+    openPane("connect", context, { ...paneOptions, env: {} });
+    return { status: "opened" };
+  }
   if (action === "start-agent") {
     const config = loadConfig(env);
-    managementAuth(config, env);
+    try {
+      managementAuth(config, env);
+    } catch (e) {
+      if (e.code !== "missing_auth") throw e;
+      openPane("connect", context, { ...paneOptions, env: {} });
+      return { status: "authentication_required" };
+    }
     agentEnvironment(config, env);
     const git = resolveGitContext(context);
     const id = randomUUID(),
@@ -104,7 +116,7 @@ export async function runAction(action, args = {}, options = {}) {
         env: {
           ...paneOptions.env,
           DAYTONA_ASSOCIATION: id,
-          HERDR_AGENT: getAdapter(config.agent).detection,
+          HERDR_AGENT: getAdapter(config.agent, config).detection,
         },
       });
     } catch (e) {
@@ -134,12 +146,27 @@ export async function runAction(action, args = {}, options = {}) {
     return applyReviewedPatch(store, r.id, args.artifact, args.digest);
   }
   if (args.confirmDelete) {
-    if (action !== "delete-sandbox" || !r)
+    if (
+      !["delete-sandbox", "replace-sandbox", "forget-mapping"].includes(
+        action,
+      ) ||
+      !r
+    )
       throw new PluginError(
         "deletion_confirmation",
         "Select an association and name its sandbox for deletion.",
       );
     const provider = await DaytonaProvider.connect(r.config, store, env);
+    if (action === "replace-sandbox")
+      return replaceAssociation(store, r.id, args.confirmDelete, {
+        ...options,
+        store,
+        env,
+        context,
+        provider,
+      });
+    if (action === "forget-mapping")
+      return forgetAssociation(store, r.id, args.confirmDelete, provider);
     return deleteAssociation(store, r.id, args.confirmDelete, provider);
   }
   if (!r && action !== "status") {
@@ -162,12 +189,14 @@ export async function runAction(action, args = {}, options = {}) {
       env: {
         ...paneOptions.env,
         DAYTONA_ASSOCIATION: r.id,
-        HERDR_AGENT: getAdapter(r.config.agent).detection,
+        HERDR_AGENT: getAdapter(r.config.agent, r.config).detection,
       },
     });
   } else {
     openPane(
-      action === "delete-sandbox" ? "confirmation" : "operation",
+      ["delete-sandbox", "replace-sandbox", "forget-mapping"].includes(action)
+        ? "confirmation"
+        : "operation",
       context,
       {
         ...paneOptions,
@@ -181,23 +210,138 @@ export async function runAction(action, args = {}, options = {}) {
   return { status: "opened", association: r?.id ?? null };
 }
 export async function deleteAssociation(store, id, confirmation, provider) {
+  return store.withLock(id, () =>
+    deleteLocked(store, id, confirmation, provider),
+  );
+}
+async function deleteLocked(store, id, confirmation, provider) {
+  const r = store.get(id);
+  if (!r.sandboxId || confirmation !== r.sandboxId)
+    throw new PluginError(
+      "deletion_confirmation",
+      "Confirmation must exactly name the recorded sandbox.",
+    );
+  await store.update(id, (v) => ({ ...v, phase: "deleting" }));
+  const box = await provider.get(r.sandboxId);
+  if (box && box.state !== "destroyed") await provider.delete(box);
+  await store.update(id, (v) => ({
+    ...v,
+    phase: "deleted",
+    deletedAt: new Date().toISOString(),
+    remotePaneId: null,
+  }));
+  return { status: "deleted", association: id, sandboxId: r.sandboxId };
+}
+export async function stopAssociation(store, id, provider) {
   return store.withLock(id, async () => {
     const r = store.get(id);
+    if (!r.sandboxId)
+      throw new PluginError(
+        "provider_missing",
+        "No sandbox identity is recorded.",
+      );
+    const box = await provider.get(r.sandboxId);
+    if (!box)
+      throw new PluginError(
+        "provider_missing",
+        "The saved sandbox no longer exists.",
+      );
+    if (!["started", "stopped", "archived"].includes(box.state))
+      throw new PluginError(
+        "sandbox_not_ready",
+        `Cannot stop sandbox in state ${box.state}. Inspect status before retrying.`,
+      );
+    if (box.state === "started") {
+      await store.update(id, (v) => ({ ...v, phase: "stopping" }));
+      await providerCall(() => box.stop(r.config.createTimeoutSeconds));
+    }
+    const after = await provider.get(r.sandboxId);
+    if (!after || !["stopped", "archived"].includes(after.state))
+      throw new PluginError(
+        "stop_uncertain",
+        "The provider has not confirmed stopped storage. Recovery metadata is retained.",
+      );
+    await store.update(id, (v) => ({
+      ...v,
+      phase: "stopped",
+      ptyId: null,
+      ptyPhase: null,
+      lastError: null,
+    }));
+    return {
+      status: "stopped",
+      association: id,
+      sandboxId: r.sandboxId,
+      providerState: after.state,
+    };
+  });
+}
+export async function replaceAssociation(
+  store,
+  id,
+  confirmation,
+  options = {},
+) {
+  return store.withLock(id, async () => {
+    const r = store.get(id),
+      env = options.env ?? process.env;
+    if (r.phase === "deleted")
+      throw new PluginError(
+        "already_deleted",
+        "This sandbox was already deleted. Use the replacement association or start a new sandbox.",
+      );
     if (!r.sandboxId || confirmation !== r.sandboxId)
       throw new PluginError(
         "deletion_confirmation",
         "Confirmation must exactly name the recorded sandbox.",
       );
-    await store.update(id, (v) => ({ ...v, phase: "deleting" }));
-    const box = await provider.get(r.sandboxId);
-    if (box && box.state !== "destroyed") await provider.delete(box);
-    await store.update(id, (v) => ({
-      ...v,
-      phase: "deleted",
-      deletedAt: new Date().toISOString(),
-      remotePaneId: null,
-    }));
-    return { status: "deleted", association: id, sandboxId: r.sandboxId };
+    const config = loadConfig(env);
+    managementAuth(config, env);
+    agentEnvironment(config, env);
+    const context = {
+      ...(options.context ?? {}),
+      worktree: { checkout_path: r.localRoot },
+      focused_pane_cwd: r.localCwd,
+      workspace_id: options.context?.workspace_id ?? r.workspaceId,
+    };
+    const git = resolveGitContext(context),
+      stat = fs.statSync(git.root);
+    if (
+      git.root !== r.localRoot ||
+      stat.dev !== r.rootIdentity?.dev ||
+      stat.ino !== r.rootIdentity?.ino
+    )
+      throw new PluginError(
+        "destination_changed",
+        "The original local worktree was replaced. The sandbox was retained.",
+      );
+    const provider =
+      options.provider ?? (await DaytonaProvider.connect(r.config, store, env));
+    await deleteLocked(store, id, confirmation, provider);
+    const next = await runAction(
+      "start-agent",
+      {},
+      { ...options, env, store, context },
+    );
+    return {
+      ...next,
+      status: "replacement_opened",
+      replacedAssociation: id,
+      deletedSandboxId: r.sandboxId,
+    };
+  });
+}
+export async function forgetAssociation(store, id, confirmation, provider) {
+  return store.withLock(id, async () => {
+    const deleted = await deleteLocked(store, id, confirmation, provider);
+    if (store.get(id).phase !== "deleted")
+      throw new PluginError(
+        "deletion_uncertain",
+        "Deletion is not confirmed. Recovery metadata is retained.",
+      );
+    fs.rmSync(path.join(store.directory, id), { recursive: true, force: true });
+    fs.unlinkSync(store.file(id));
+    return { ...deleted, status: "forgotten" };
   });
 }
 export async function worktreeRemoved(
