@@ -60,7 +60,8 @@ Fresh `npm ci --omit=dev` passed in a disposable path containing spaces, with
 169 production dependencies and no npm audit findings. Both Herdr versions linked
 that path and invoked its dispatcher from an unrelated cwd. GitHub installation
 used `plugin install allagentsdev/herdr-daytona-sandbox --ref feat/daytona-sandbox --yes`.
-Default-branch installation must be checked after merge.
+Default-branch GitHub installation subsequently passed on both Herdr 0.8.0 and
+0.9.5 at merged commit `e4eac07874168c239ab36d5b93f1225a4b3c2e6f`.
 
 ## Authenticated agent tasks
 
@@ -143,7 +144,7 @@ and cleanup races; targeted regressions failed before their fixes and pass now.
       the provider's last-activity timestamp, so elapsed idle behavior is not claimed.
 - [ ] Cloud pane attachment on Herdr 0.8.0. Expanded ten-action/five-entrypoint
       registration passed; cloud interaction used 0.9.5.
-- [ ] Default-branch GitHub installation after merge.
+- [x] Default-branch GitHub installation after merge, on Herdr 0.8.0 and 0.9.5.
 
 These gaps remain open. No complete cross-platform acceptance claim follows from
 Linux dogfooding. See the [Vercel workflow comparison](vercel-parity.md) for the

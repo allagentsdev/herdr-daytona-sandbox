@@ -1,326 +1,179 @@
-# Herdr Daytona Sandbox
+# Daytona Sandbox for Herdr
 
-Run Claude Code, Codex, OpenCode, or Pi in a persistent Daytona Linux sandbox
-from a Herdr pane. Upload a filtered snapshot of a Git worktree, reconnect to its
-saved workspace, then review and explicitly approve remote changes locally.
+[![CI](https://github.com/allagentsdev/herdr-daytona-sandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/allagentsdev/herdr-daytona-sandbox/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/allagentsdev/herdr-daytona-sandbox)](LICENSE)
 
-**Implementation under verification.** All four pinned agents completed
-authenticated coding tasks in real Linux Daytona sandboxes. Local checks, live
-lifecycle results and remaining platform checks are recorded in
-[verification](docs/verification.md). See the [Vercel workflow comparison](docs/vercel-parity.md)
-for supported actions and deliberate provider/security differences.
+Run Claude Code, Codex, OpenCode or Pi in a persistent Daytona Linux sandbox
+without leaving Herdr.
 
-## Install
+Your Git worktree stays local. The plugin uploads a filtered snapshot, opens the
+remote agent in a Herdr pane, and returns its changes as a patch you review and
+approve before it changes local files.
 
-Requires Linux or macOS, Herdr 0.8.0+, Node.js 22+, npm, and Git. Local agent
+## Quick start
+
+You need Linux or macOS, [Herdr 0.8.0+](https://herdr.dev/docs/), Node.js 22+,
+npm, Git and a Daytona account. The plugin uses the Daytona SDK; local agent
 binaries and the Daytona CLI are unnecessary.
 
-After this implementation reaches the default branch:
+Install the plugin:
 
 ```sh
 herdr plugin install allagentsdev/herdr-daytona-sandbox
 ```
 
-Until then, install the review branch:
+Then:
+
+1. Open a local shell pane inside a Git worktree in Herdr.
+2. Start the default agent, Codex:
+
+   ```sh
+   herdr plugin action invoke start-agent --plugin daytona.sandbox
+   ```
+
+3. If Daytona credentials are missing, Start opens **Connect Daytona account**.
+   Enter your [API key](https://app.daytona.io/dashboard/keys) in the masked popup, then invoke Start again. You can also
+   supply `DAYTONA_API_KEY` in the Herdr server's environment.
+4. Review the upload manifest and destination in the new pane. Type
+   `UPLOAD <full-digest>` using the displayed digest to approve those exact bytes.
+5. Sign in to the coding agent inside the sandbox, then give it a task.
+   Daytona authentication and the agent's model authentication are separate.
+6. Return to a local shell pane in the same Herdr workspace and review the result:
+
+   ```sh
+   herdr plugin action invoke apply-changes --plugin daytona.sandbox
+   ```
+
+   Read the destination, changed paths and full patch, then type `APPLY` to
+   approve it. Cancellation leaves local files unchanged. Conflicts abort
+   without staging, committing, resetting or automatically merging anything.
+
+Each Start creates an independent sandbox. Reconnect reuses an existing one.
+By default, Daytona stops compute after **15 minutes of provider-detected
+inactivity**, retaining files and ending running processes. Delete a sandbox
+explicitly when finished; storage charges may continue after stop.
+
+## Choose an agent
+
+Find the managed configuration directory:
 
 ```sh
-herdr plugin install allagentsdev/herdr-daytona-sandbox --ref feat/daytona-sandbox
-```
-
-The install hook runs `npm ci --omit=dev`. For a local checkout, install
-dependencies **before linking**; Herdr does not run build hooks on link:
-
-```sh
-npm ci
-herdr plugin link "$PWD"
-herdr plugin action list --plugin daytona.sandbox
 herdr plugin config-dir daytona.sandbox
 ```
 
-Installed/linked plugins are global to your Herdr configuration. Development
-checks should use temporary XDG directories and a named Herdr session to protect
-your normal configuration and panes.
-
-## Authentication and configuration
-
-Provide `DAYTONA_API_KEY` in the environment of the Herdr server that launches
-plugin actions. Alternatively provide both `DAYTONA_JWT_TOKEN` and
-`DAYTONA_ORGANIZATION_ID`, or invoke **Connect Daytona account** to enter a key in
-a masked local popup. The connection action checks the key with a read-only
-request before saving it in the private plugin configuration directory, bound
-to the configured API endpoint. It never creates a sandbox. Start opens this
-setup popup when credentials are missing; finish setup and invoke Start again.
-Explicit API-key environment authentication takes precedence, then complete JWT
-authentication, then the saved key. Configuration can reference other host variable names;
-it never contains their secret values. Restart only a session you own when
-changing its inherited environment. A Daytona CLI login profile does not
-automatically authenticate the SDK.
-
-Put `config.json` in the directory printed by `herdr plugin config-dir
-daytona.sandbox`. Start from [config.example.json](config.example.json), or a
-minimal object:
+Create `config.json` there, for example:
 
 ```json
-{ "agent": "codex", "agentArgs": [], "autoStopInterval": 15 }
+{ "agent": "claude-code", "agentArgs": [] }
 ```
 
-No host agent auth directories or provider keys are copied by default. Use the
-agent's own sign-in interface inside the sandbox, or explicitly allow named host
-provider keys:
+Use `codex`, `claude-code`, `opencode` or `pi`. Settings affect new sandboxes;
+existing associations retain the configuration used to create them. Host agent
+sessions and keys are not copied by default. Use the agent's own login or an
+[explicit provider-key allowlist](docs/configuration.md#authentication-and-agent-selection).
+Never put secret values in configuration or agent arguments.
 
-```json
-{
-  "agent": "claude-code",
-  "agentEnvAllowlist": ["ANTHROPIC_API_KEY"]
-}
-```
-
-Each allowlisted variable must be present when starting. Only uppercase provider
-`*_API_KEY` / `*_TOKEN` names and AWS access-key variable names are accepted.
-Daytona management variables, including configured aliases, are forbidden.
-Keys go only to the selected remote PTY; they are absent from local association
-records and upload files. Codex's explicit `OPENAI_API_KEY` injection also runs
-its API-key login within that remote terminal. Never put secrets in `agentArgs`.
-
-The SDK runs from a private plugin state directory with explicit credentials,
-endpoint, and region, avoiding repository-controlled `.env` files.
-
-| Field                  | Default                      | Meaning                                                                                |
-| ---------------------- | ---------------------------- | -------------------------------------------------------------------------------------- |
-| `agent`                | `codex`                      | `codex`, `claude-code`, `opencode`, or `pi`                                            |
-| `agentArgs`            | `[]`                         | Literal argv array; values are shell quoted individually                               |
-| `region`               | `eu`                         | Explicit Daytona target; no automatic region fallback                                  |
-| `image`                | `node:22.22.0-bookworm`      | Linux image with Bash, Git, Node 22+, npm, root installation access                    |
-| `snapshot`             | `null`                       | Existing Daytona snapshot; when supplied without `image`, replaces the default image   |
-| `remoteRoot`           | `/workspace`                 | Normalized `/workspace` or a path beneath it                                           |
-| `excludedPaths`        | `[]`                         | Additional exact paths, directory prefixes (`dir/`, `dir/**`), or extensions (`*.ext`) |
-| `maxFiles`             | `10000`                      | Maximum included snapshot/export file count                                            |
-| `maxFileBytes`         | `10485760`                   | Maximum individual file size (10 MiB)                                                  |
-| `maxUploadBytes`       | `104857600`                  | Maximum total snapshot/export bytes (100 MiB)                                          |
-| `autoStopInterval`     | `15`                         | Provider-detected inactivity minutes; `0` disables automatic stop                      |
-| `createTimeoutSeconds` | `300`                        | Sandbox create/start/delete operation timeout                                          |
-| `execTimeoutSeconds`   | `300`                        | Setup commands and individual file transfers                                           |
-| `requestTimeoutMs`     | `60000`                      | SDK HTTP request timeout; separate from operation deadlines                            |
-| `agentEnvAllowlist`    | `[]`                         | Explicit named host provider keys to inject                                            |
-| `customAgents`         | `{}`                         | Declarative terminal-agent profiles; commands run only in the sandbox                  |
-| `allowCandidateAgents` | `false`                      | Explicitly opt in to custom profiles, which remain labeled unverified                  |
-| `onWorktreeRemoved`    | `retain`                     | `retain`, or `confirm-delete` to request a deletion dialog                             |
-| `installDependencies`  | `false`                      | Opt in to running project `npm ci` remotely; package scripts execute project code      |
-| `apiUrl`               | `https://app.daytona.io/api` | Explicit HTTPS management endpoint                                                     |
-| `apiKeyEnv`            | `DAYTONA_API_KEY`            | Host API-key variable name, preferred over JWT                                         |
-| `jwtTokenEnv`          | `DAYTONA_JWT_TOKEN`          | Host SDK JWT variable name                                                             |
-| `organizationIdEnv`    | `DAYTONA_ORGANIZATION_ID`    | Host organization variable name for JWT auth                                           |
-
-Choose one image or snapshot; explicitly setting both fails validation. Unknown
-fields and invalid settings fail before compute allocation. Timeouts do not
-prove a provider request was cancelled.
-
-## Actions
-
-Use Herdr's workspace/pane action picker, or:
-
-```sh
-herdr plugin action invoke start-agent --plugin daytona.sandbox
-herdr plugin action invoke reconnect --plugin daytona.sandbox
-herdr plugin action invoke apply-changes --plugin daytona.sandbox
-herdr plugin action invoke status --plugin daytona.sandbox
-herdr plugin action invoke delete-sandbox --plugin daytona.sandbox
-herdr plugin action invoke connect-daytona --plugin daytona.sandbox
-herdr plugin action invoke stop --plugin daytona.sandbox
-herdr plugin action invoke info --plugin daytona.sandbox
-herdr plugin action invoke replace-sandbox --plugin daytona.sandbox
-herdr plugin action invoke forget-mapping --plugin daytona.sandbox
-```
-
-- **Start** captures the invoking Git worktree, including eligible uncommitted
-  and untracked files. A new pane shows every eligible path, size, mode and hash,
-  the destination and the manifest digest. Type `UPLOAD <full-digest>` there to
-  approve those exact staged bytes before any provider connection or allocation.
-  Other input cancels. Files changed locally during review do not replace the
-  staged snapshot. Each independent start gets a separate sandbox.
-- **Reconnect** uses the associated pane, or asks you to select a retained
-  association for the current worktree. It never reuploads. A live PTY is
-  reattached without launching another agent. After stop/archive recovery, a new
-  agent process uses the same retained files.
-- **Apply changes** exports files, compares them to the uploaded baseline or
-  last applied checkpoint in an isolated local Git repository, and saves a
-  binary-capable patch. The popup pages through the destination, changed paths,
-  digest, and full patch before asking you to type `APPLY`. Terminal controls and
-  invalid text bytes are displayed as visible escapes; the saved patch stays
-  byte-exact. Cancellation changes
-  neither local files nor checkpoint. The exact reviewed bytes must pass
-  `git apply --check` again at application. Conflicts abort; nothing is staged,
-  committed, reset, or merged automatically. Agent-created Git commits cannot
-  hide edits. Repeating apply without new edits is a no-op.
-- **Status** reports saved association, sandbox, agent version, paths, phase,
-  last pane, and provider state. It never starts a stopped sandbox. A last pane
-  ID is historical and may refer to a disconnected or closed pane. **Info** is
-  an equivalent action and includes custom profile capability/auth metadata.
-- **Connect Daytona account** verifies existing authentication without saving
-  environment keys, or prompts for a key and saves it only after verification.
-- **Stop** stops compute and retains files, baselines and recovery metadata.
-  Reconnect restarts a prepared agent. Stopping an interrupted setup preserves
-  its failure state; it does not make an incomplete workspace ready.
-- **Replace sandbox** requires the exact named deletion confirmation, validates
-  the local worktree and new configuration, then deletes the old sandbox and
-  opens a fresh start with the current configuration and a new upload review.
-- **Delete and forget mapping** uses the same named deletion confirmation and
-  removes the association and its saved review/recovery artifacts only after
-  provider-confirmed deletion. Local worktree files remain unchanged.
-- **Delete** names the sandbox and requires `DELETE <sandbox-id>`. The local
-  recovery record remains until Daytona confirms absence/destruction; a deletion
-  tombstone remains afterward. Closing a pane or removing a worktree retains the
-  sandbox. Optional removal cleanup still requires this confirmation and fails
-  closed when the popup is unavailable/busy.
-
-Popup entrypoints receive an explicit association because Herdr popups have no
-pane ID. An occupied UI cannot approve a patch or deletion.
-
-## Persistence and costs
-
-Sandboxes are non-ephemeral, with `autoDeleteInterval: -1` and `ttlMinutes: 0`.
-The default **15-minute inactivity auto-stop retains files and ends running
-processes**. This is not a promise that agent memory or an unattended run survives
-a stop. Provider archival retains files; archive recovery passed the Linux live
-check. The effect of terminal traffic on provider inactivity accounting is
-unverified. Increase/disable auto-stop explicitly for longer unattended work,
-accounting for ongoing compute charges. Storage and other provider charges may
-continue after stop. Delete explicitly when finished.
-
-Pinned agent installers:
-
-| Agent       | Package                                | Herdr detection kind |
+| Agent       | Pinned package                         | Herdr detection kind |
 | ----------- | -------------------------------------- | -------------------- |
 | Codex       | `@openai/codex@0.169.0`                | `codex`              |
 | Claude Code | `@anthropic-ai/claude-code@2.1.325`    | `claude`             |
 | OpenCode    | `opencode-ai@1.19.5`                   | `opencode`           |
 | Pi          | `@mariozechner/pi-coding-agent@0.73.1` | `pi`                 |
 
-All four pins completed authenticated Linux fixture tasks; see the exact
-versions, model routes and remaining host checks in [verification](docs/verification.md).
-Startup checks record the actual installed version. Custom images must
-provide the required tools; failures retain the sandbox for inspection.
+All four pins completed authenticated Linux coding tasks and reviewed patch
+return with Herdr 0.9.5 and Daytona SDK 0.231.1. Local checks and Linux/macOS CI
+pass. Interactive macOS, Herdr 0.8.0 cloud attachment and timed inactivity behavior
+remain unverified; see the [verification record](docs/verification.md).
 
-## Custom terminal agents
+## Actions
 
-Custom profiles require explicit opt-in and remain labeled
-`user-provided-unverified`. Their commands execute inside the sandbox, using
-the same filtered upload, PTY, review and deletion boundaries. Profiles cannot
-replace builtins and must declare interactive TTY and resume support.
+Run actions from a local shell in the relevant Herdr workspace or use Herdr's
+workspace/pane action picker. The remote agent pane does not have your local
+Herdr CLI or shell functions.
 
-```json
-{
-  "agent": "my-agent",
-  "allowCandidateAgents": true,
-  "customAgents": {
-    "my-agent": {
-      "title": "My Agent",
-      "installationCommand": "npm install --global my-agent@1.2.3",
-      "launchCommand": "my-agent",
-      "versionCommand": "my-agent --version",
-      "expectedVersion": "1.2.3",
-      "authenticationMode": "device-code",
-      "herdrDetectionIdentifier": "generic",
-      "interactiveTTY": true,
-      "resumeSupported": true
-    }
-  }
-}
-```
+| Action ID         | What it does                                                             |
+| ----------------- | ------------------------------------------------------------------------ |
+| `start-agent`     | Creates a sandbox after upload approval and opens the configured agent.  |
+| `connect-daytona` | Verifies credentials or prompts for a management API key locally.        |
+| `reconnect`       | Selects a retained association and reconnects without reuploading.       |
+| `apply-changes`   | Shows and applies the exact reviewed patch after approval.               |
+| `status` / `info` | Shows the mapping, installed agent version and provider state.           |
+| `stop`            | Stops compute while retaining files and recovery metadata.               |
+| `replace-sandbox` | Confirms deletion, then starts a replacement with a fresh upload review. |
+| `delete-sandbox`  | Confirms deletion while retaining a local deletion record.               |
+| `forget-mapping`  | Confirms deletion, then removes the mapping and saved artifacts.         |
 
-All nine profile fields are required. Detection identifiers are `generic`,
-`codex`, `claude`, `opencode`, or `pi`. `authenticationMode` describes the
-agent's login method; it does not copy credentials or implement login for it.
-`agentArgs` remains an array of literal arguments, quoted when appended to the
-configured launch command. Agent commands may run shell code remotely; never
-put secret values in commands or arguments. Use the explicit environment
-allowlist or log in inside the sandbox instead.
-
-## File boundaries
-
-Mandatory exclusions cannot be disabled: Git metadata, nested repositories and
-submodules, dependency/build/cache directories, `.env` and all variants,
-known credential files/directories, private-key extensions, and agent auth or
-session archives. Symlinks are skipped without dereferencing. Executable modes,
-empty files, UTF-8 names (including spaces/newlines), and binary data are
-preserved. Git LFS pointers remain pointers; payloads are not fetched. Non-UTF-8
-filenames are unsupported.
-
-Tracked-but-ignored files are filtered too. High-confidence secret patterns add
-another exclusion, but this is **not a general secret scanner**: unknown secrets
-inside otherwise eligible source can still leave your machine. Inspect the
-printed upload summary and use additional excludes as needed. Excluded content
-can make a project incomplete. Downloads enforce path, file-count, and byte
-limits before applying, and remote Git metadata/config/hooks never control the
-returned diff. Export uses the configured path/secret policy rather than
-agent-controlled ignore rules.
-
-## Review artifacts and recovery
-
-Herdr supplies `HERDR_PLUGIN_STATE_DIR`. Private association JSON files and
-baseline/review artifacts live there with owner-only permissions, outside the
-worktree. Associations include the server/session namespace, worktree identity,
-sandbox/PTY IDs, region/config, phases, and content digests. Keep these files to
-recover orphaned sandboxes and incremental patch checkpoints.
-
-For automation, run from the same Herdr server/session environment, with
-`HERDR_PLUGIN_CONFIG_DIR` and `HERDR_PLUGIN_STATE_DIR` set to their supplied
-directories. Export and review without approving:
+For example, reconnect to a retained sandbox:
 
 ```sh
-node /path/to/plugin/src/action.mjs apply-changes \
-  --association <association-id> --export-only
+herdr plugin action invoke reconnect --plugin daytona.sandbox
 ```
 
-The `DAYTONA_RESULT` record identifies `artifact`, `digest`, `patchPath`, changed
-paths, and destination. Inspect that saved patch, then separately approve those
-exact bytes:
+See the [action reference](docs/actions.md) for selection, confirmation and
+failure behavior.
 
-```sh
-node /path/to/plugin/src/action.mjs apply-changes \
-  --association <association-id> --artifact <artifact-id> \
-  --digest <sha256> --approve
-```
+## Persistence and costs
 
-Direct deletion requires `delete-sandbox --association <id> --confirm-delete
-<sandbox-id>`. Omitted input or a generic yes flag never approves anything.
+Sandboxes use `autoDeleteInterval: -1` and `ttlMinutes: 0`: there is no automatic
+deletion or destructive wall-clock deadline. The configurable 15-minute inactivity
+auto-stop retains files, not running processes or agent memory. Reconnect resumes
+the same storage and starts a new agent process when needed. Archive recovery
+also passed the Linux live check.
 
-If creation times out, the provisional operation label `herdr-operation=<id>`
-and association are retained. Reconnect reconciles that exact label before any
-further action. An unresolved request never triggers blind recreation. A later
-setup failure retains the sandbox ID and phase; inspect it in Daytona, then
-delete or recover manually. Reconnect deliberately refuses to overwrite a
-partially prepared workspace. If an initial PTY launch was uncertain, it attaches
-without resending the command and reports that uncertainty.
+The effect of terminal traffic on Daytona's inactivity accounting is unverified.
+Increase `autoStopInterval`, or set it to `0`, for longer unattended work,
+accounting for ongoing compute charges. Storage and other provider charges may
+continue after stop.
 
-An approved apply saves private snapshots of the changed local files before and
-after the checked patch. This preserves new non-overlapping local edits while
-keeping the remote checkpoint separate. If files applied but the checkpoint
-write failed, a later apply reconciles the recorded local result without
-replaying it. If interruption happened before writing, unchanged local files
-allow a checked retry. A partial or divergent mismatch requires inspection of
-the retained artifact. Never delete a baseline/checkpoint to force an apply.
+Deletion requires `DELETE <sandbox-id>`. Closing a pane or removing a worktree
+retains the sandbox by default. Optional cleanup on worktree removal still asks
+for named deletion confirmation. Replacement also permanently deletes remote files.
 
-If a previously uploaded/checkpoint file becomes excluded remotely (for example,
-it becomes a symlink or contains detected secret material), export stops instead
-of presenting it as a deletion. Inspect the remote file before retrying.
+## Upload and patch safety
 
-Locks serialize actions on one association. A dead process's lock is recovered
-on retry under a separate recovery lock, with its owner checked again. If a
-malformed lock or abandoned `.lock.recovery` remains, inspect the recorded PIDs
-and remove only that association's lock after confirming no action is running. State may
-contain private source; remove local artifacts only after remote cleanup and
-when you no longer need recovery. No background orphan collector runs.
+The snapshot includes eligible dirty and untracked files. Mandatory exclusions
+remove Git metadata, ignored paths, dependencies, environment files and known
+credentials. Symlinks are skipped. These filters cannot be disabled, and they
+are not a general secret scanner: inspect the manifest and add exclusions for
+private source or unrecognized secrets.
+
+Remote edits stay remote until you approve a patch. Binary bytes, executable
+modes and agent-committed changes are included. Application checks conflicts and
+preserves the local index; repeating apply without new edits is a no-op.
+An approved patch advances a checkpoint for the next return.
+
+See [file boundaries](docs/configuration.md#file-boundaries) for limits and
+[recovery](docs/recovery.md) for retained baselines, interrupted operations and
+review artifacts. Keep recovery files until remote cleanup is complete.
+
+## Documentation
+
+- [Configuration and authentication](docs/configuration.md)
+- [Custom terminal agents](docs/configuration.md#custom-terminal-agents)
+- [Action reference](docs/actions.md)
+- [Recovery and automation](docs/recovery.md)
+- [Verification and remaining coverage](docs/verification.md)
+- [Vercel workflow comparison](docs/vercel-parity.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md) and [MIT license](LICENSE)
 
 ## Development
+
+Install dependencies **before linking** a local checkout; Herdr does not run
+build hooks on link:
 
 ```sh
 npm ci
 npm run check
+herdr plugin link "$PWD"
+herdr plugin action list --plugin daytona.sandbox
 ```
 
-Checks run Prettier, ESLint, manifest verification, and Node tests. CI runs on
-Linux/macOS with Node 22 and never uses cloud credentials. The
-[reviewed implementation plan](docs/plans/2026-11-16-1306-feat-daytona-sandbox-plugin-plan.md)
-defines the open live acceptance matrix. See [third party notices](THIRD_PARTY_NOTICES.md)
-for the MIT Blaxel adaptations; Vercel was a behavior reference only.
+GitHub installation runs `npm ci --omit=dev` automatically. Installed/linked
+plugins are global to your Herdr configuration. Use temporary XDG directories
+and a named Herdr session for integration tests to protect existing panes.
+
+Checks run Prettier, ESLint, manifest verification and Node tests. CI uses Node 22
+on Linux/macOS and never uses cloud credentials. The
+[implementation plan](docs/plans/2026-11-16-1306-feat-daytona-sandbox-plugin-plan.md)
+records the original requirements; the verification record tracks observed results
+and remaining acceptance coverage.
