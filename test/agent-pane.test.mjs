@@ -102,3 +102,55 @@ test("PTY launches once, forwards binary input/resize, reattaches, restores raw 
   assert.equal(disconnects, 2);
   assert.equal(signals.listenerCount("SIGTERM"), 0);
 });
+
+test("uncertain initial PTY launch is reattached without resending its command", async (t) => {
+  const store = new Store(temporary(t)),
+    id = randomUUID(),
+    config = validateConfig({});
+  await store.create({
+    id,
+    namespace: "n",
+    localRoot: "/tmp",
+    relativeCwd: ".",
+    phase: "ready",
+    sandboxId: "box",
+    config,
+  });
+  let sent = 0,
+    connected = 0;
+  const handle = {
+    sendInput: async () => {
+      sent++;
+      throw Error("lost reply");
+    },
+    disconnect: async () => {},
+    resize: async () => {},
+    wait: async () => ({}),
+  };
+  const box = {
+    state: "started",
+    process: {
+      createPty: async () => handle,
+      getPtySessionInfo: async () => ({ active: true }),
+      connectPty: async () => {
+        connected++;
+        return handle;
+      },
+    },
+  };
+  const provider = {
+    get: async () => box,
+    resume: async () => box,
+    environment: () => ({}),
+  };
+  const io = {
+    input: new PassThrough(),
+    output: new PassThrough(),
+    signals: new EventEmitter(),
+  };
+  await assert.rejects(attachAgent(store, id, provider, io));
+  assert.equal(store.get(id).ptyPhase, "launching");
+  await attachAgent(store, id, provider, io);
+  assert.equal(connected, 1);
+  assert.equal(sent, 1);
+});

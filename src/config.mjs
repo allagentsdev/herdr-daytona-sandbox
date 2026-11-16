@@ -158,6 +158,11 @@ export function managementAuth(c, env = process.env) {
   );
 }
 export function agentEnvironment(c, env = process.env) {
+  if (c.agentEnvAllowlist.some((k) => !env[k]))
+    throw new PluginError(
+      "missing_agent_env",
+      "An explicitly allowlisted provider key is missing from the host environment.",
+    );
   return Object.fromEntries(
     c.agentEnvAllowlist.filter((k) => env[k]).map((k) => [k, env[k]]),
   );

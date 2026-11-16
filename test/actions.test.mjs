@@ -120,7 +120,7 @@ test("worktree removal matches exact event path and retains resources", async (t
     store,
     {
       data: {
-        type: "worktree.removed",
+        type: "worktree_removed",
         workspace_id: "w1",
         worktree: { path: "/gone/tree" },
       },

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { ACTIONS } from "./constants.mjs";
-import { loadConfig, managementAuth } from "./config.mjs";
+import { loadConfig, managementAuth, agentEnvironment } from "./config.mjs";
 import { parsePluginContext, resolveGitContext } from "./context.mjs";
 import { Store, namespace } from "./state.mjs";
 import { openPluginPane } from "./herdr.mjs";
@@ -75,6 +75,7 @@ export async function runAction(action, args = {}, options = {}) {
   if (action === "start-agent") {
     const config = loadConfig(env);
     managementAuth(config, env);
+    agentEnvironment(config, env);
     const git = resolveGitContext(context);
     const id = randomUUID(),
       stat = fs.statSync(git.root);
@@ -112,6 +113,16 @@ export async function runAction(action, args = {}, options = {}) {
     return { status: "opened", association: id };
   }
   const r = selectAssociation(store, context, env, args.association);
+  if (args.exportOnly) {
+    if (action !== "apply-changes" || !r)
+      throw new PluginError(
+        "review_required",
+        "Export requires an explicit association.",
+      );
+    const provider = await DaytonaProvider.connect(r.config, store, env);
+    const { preparePatch } = await import("./patch.mjs");
+    return preparePatch(store, r.id, provider);
+  }
   if (args.approve) {
     if (action !== "apply-changes" || !r || !args.artifact || !args.digest)
       throw new PluginError(
@@ -197,7 +208,7 @@ export async function worktreeRemoved(
 ) {
   const data = event.data;
   if (
-    data?.type !== "worktree.removed" ||
+    data?.type !== "worktree_removed" ||
     typeof data.worktree?.path !== "string"
   )
     throw new PluginError(

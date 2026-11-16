@@ -1,0 +1,337 @@
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { randomUUID } from "node:crypto";
+import {
+  git,
+  digest,
+  readSnapshot,
+  pathExclusionReason,
+  assertSafeParents,
+  readRegular,
+  contentExclusionReason,
+} from "./manifest.mjs";
+import { atomicJson } from "./state.mjs";
+import { PluginError, safeText } from "./result.mjs";
+
+function validateSnapshot(snapshot, c) {
+  if (
+    snapshot.files.length > c.maxFiles ||
+    snapshot.totalBytes > c.maxUploadBytes
+  )
+    throw new PluginError(
+      "snapshot_limit",
+      "Returned snapshot exceeds configured limits.",
+    );
+  for (const f of snapshot.files) {
+    if (pathExclusionReason(f.path, c))
+      throw new PluginError(
+        "excluded_patch_path",
+        "Returned content includes an excluded path.",
+      );
+    if (
+      f.size > c.maxFileBytes ||
+      contentExclusionReason(
+        readRegular(
+          path.join(snapshot.directory, "files"),
+          f.path,
+          c.maxFileBytes,
+        ).bytes,
+      )
+    )
+      throw new PluginError(
+        "excluded_patch_path",
+        "Returned content exceeds file limits or contains a detected secret.",
+      );
+  }
+}
+function compareSnapshots(before, after) {
+  const a = new Map(before.files.map((f) => [f.path, f])),
+    b = new Map(after.files.map((f) => [f.path, f]));
+  return [...new Set([...a.keys(), ...b.keys()])]
+    .filter(
+      (p) =>
+        a.get(p)?.sha256 !== b.get(p)?.sha256 ||
+        a.get(p)?.mode !== b.get(p)?.mode,
+    )
+    .sort();
+}
+function buildPatch(before, after) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "herdr-daytona-diff-"));
+  try {
+    git(dir, ["init", "--bare", "-q"]);
+    const tree = (snapshot) => {
+      git(dir, ["read-tree", "--empty"]);
+      const entries = snapshot.files
+        .map((f) => {
+          const bytes = readRegular(
+            path.join(snapshot.directory, "files"),
+            f.path,
+            f.size,
+          ).bytes;
+          const oid = git(
+            dir,
+            ["hash-object", "--no-filters", "-w", "--stdin"],
+            { input: bytes },
+          ).stdout.trim();
+          return `${f.mode} ${oid}\t${f.path}\0`;
+        })
+        .join("");
+      if (entries)
+        git(dir, ["update-index", "-z", "--index-info"], { input: entries });
+      return git(dir, ["write-tree"]).stdout.trim();
+    };
+    const old = tree(before),
+      next = tree(after);
+    return git(
+      dir,
+      [
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--binary",
+        "--full-index",
+        "--no-renames",
+        old,
+        next,
+        "--",
+      ],
+      {
+        encoding: null,
+        maxBuffer: Math.max(
+          32 * 1024 * 1024,
+          5 * (before.totalBytes + after.totalBytes),
+        ),
+      },
+    ).stdout;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+function reviewDirectory(store, id, artifact) {
+  store.file(artifact);
+  return path.join(store.artifacts(id), "reviews", artifact);
+}
+function destination(record) {
+  let stat;
+  try {
+    stat = fs.lstatSync(record.localRoot);
+  } catch {
+    throw new PluginError(
+      "destination_changed",
+      "The destination worktree is missing.",
+    );
+  }
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.dev !== record.rootIdentity.dev ||
+    stat.ino !== record.rootIdentity.ino ||
+    fs.realpathSync(record.localRoot) !== record.localRoot
+  )
+    throw new PluginError(
+      "destination_changed",
+      "The destination worktree was replaced or moved.",
+    );
+  const actual = git(record.localRoot, ["rev-parse", "--show-toplevel"], {
+    check: false,
+  });
+  if (actual.status !== 0 || actual.stdout.trim() !== record.localRoot)
+    throw new PluginError(
+      "destination_changed",
+      "The destination no longer resolves to the captured Git worktree.",
+    );
+}
+function verifiedCandidate(store, record, artifact, expectedDigest) {
+  const dir = reviewDirectory(store, record.id, artifact);
+  const metadata = JSON.parse(
+    fs.readFileSync(path.join(dir, "review.json"), "utf8"),
+  );
+  if (
+    metadata.artifact !== artifact ||
+    metadata.association !== record.id ||
+    metadata.destination !== record.localRoot ||
+    metadata.fromDigest !== record.checkpointDigest
+  )
+    throw new PluginError(
+      "stale_artifact",
+      "This review artifact no longer matches the association checkpoint.",
+    );
+  const patch = readRegular(
+    dir,
+    "changes.patch",
+    record.config.maxUploadBytes * 10,
+  ).bytes;
+  if (digest(patch) !== expectedDigest || metadata.digest !== expectedDigest)
+    throw new PluginError(
+      "artifact_changed",
+      "The reviewed patch bytes or digest changed.",
+    );
+  const before = readSnapshot(record.checkpoint),
+    after = readSnapshot(path.join(dir, "next"));
+  validateSnapshot(before, record.config);
+  validateSnapshot(after, record.config);
+  if (
+    before.digest !== record.checkpointDigest ||
+    after.digest !== metadata.nextDigest ||
+    !patch.equals(buildPatch(before, after))
+  )
+    throw new PluginError(
+      "artifact_changed",
+      "The patch no longer matches the trusted content comparison.",
+    );
+  const changedPaths = compareSnapshots(before, after);
+  return { metadata, patch, after, changedPaths };
+}
+function localMatches(record, snapshot, paths) {
+  const files = new Map(snapshot.files.map((f) => [f.path, f]));
+  return paths.every((p) => {
+    assertSafeParents(record.localRoot, p, { allowMissing: true });
+    const f = files.get(p);
+    if (!f) return !fs.existsSync(path.join(record.localRoot, p));
+    try {
+      const entry = readRegular(
+        record.localRoot,
+        p,
+        record.config.maxFileBytes,
+      );
+      return digest(entry.bytes) === f.sha256 && entry.mode === f.mode;
+    } catch {
+      return false;
+    }
+  });
+}
+async function recoverApply(store, record) {
+  if (!record.pendingApply) return record;
+  destination(record);
+  const p = record.pendingApply,
+    candidate = verifiedCandidate(store, record, p.artifact, p.digest);
+  if (!localMatches(record, candidate.after, candidate.changedPaths))
+    throw new PluginError(
+      "apply_recovery_required",
+      "An approved apply was interrupted. Compare local files with the retained review artifact before retrying; checkpoint unchanged.",
+    );
+  return store.update(record.id, (v) => ({
+    ...v,
+    checkpoint: candidate.after.directory,
+    checkpointDigest: candidate.after.digest,
+    pendingApply: null,
+    lastAppliedArtifact: p.artifact,
+  }));
+}
+export async function preparePatch(store, id, provider) {
+  return store.withLock(id, async () => {
+    const r = await recoverApply(store, store.get(id));
+    destination(r);
+    const before = readSnapshot(r.checkpoint);
+    if (before.digest !== r.checkpointDigest)
+      throw new PluginError(
+        "snapshot_corrupt",
+        "Checkpoint digest differs from the association.",
+      );
+    const artifact = randomUUID(),
+      dir = reviewDirectory(store, id, artifact);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const after = readSnapshot(
+      (await provider.exportSnapshot(r, path.join(dir, "next"))).directory,
+    );
+    validateSnapshot(before, r.config);
+    validateSnapshot(after, r.config);
+    const changedPaths = compareSnapshots(before, after),
+      patch = buildPatch(before, after);
+    if (patch.length > r.config.maxUploadBytes * 10)
+      throw new PluginError(
+        "patch_limit",
+        "Patch exceeds the bounded review limit.",
+      );
+    if (!patch.length) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return { status: "no_change", association: id };
+    }
+    const patchPath = path.join(dir, "changes.patch"),
+      metadataPath = path.join(dir, "review.json");
+    fs.writeFileSync(patchPath, patch, { mode: 0o600, flag: "wx" });
+    const metadata = {
+      schemaVersion: 1,
+      artifact,
+      association: id,
+      destination: r.localRoot,
+      fromDigest: before.digest,
+      nextDigest: after.digest,
+      digest: digest(patch),
+      changedPaths,
+      createdAt: new Date().toISOString(),
+    };
+    atomicJson(metadataPath, metadata);
+    return {
+      ...metadata,
+      status: "review_required",
+      patchPath,
+      metadataPath,
+      bytes: patch.length,
+    };
+  });
+}
+export function reviewText(candidate) {
+  return `Destination: ${candidate.destination}\nAssociation: ${candidate.association}\nArtifact: ${candidate.artifact}\nSHA-256: ${candidate.digest}\nChanged paths:\n${candidate.changedPaths.map((p) => JSON.stringify(p)).join("\n")}\n\n${safeText(fs.readFileSync(candidate.patchPath, "utf8"))}`;
+}
+export async function applyReviewedPatch(store, id, artifact, expectedDigest) {
+  return store.withLock(id, async () => {
+    let r = store.get(id);
+    if (r.pendingApply) {
+      r = await recoverApply(store, r);
+      if (r.lastAppliedArtifact === artifact)
+        return {
+          status: "applied",
+          association: id,
+          artifact,
+          recovered: true,
+        };
+    }
+    destination(r);
+    const candidate = verifiedCandidate(store, r, artifact, expectedDigest);
+    for (const p of candidate.changedPaths)
+      assertSafeParents(r.localRoot, p, { allowMissing: true });
+    const args = ["apply", "--binary", "--whitespace=nowarn", "-"];
+    const checked = git(r.localRoot, [...args.slice(0, -1), "--check", "-"], {
+      input: candidate.patch,
+      check: false,
+    });
+    if (checked.status !== 0)
+      throw new PluginError(
+        "patch_conflict",
+        "git apply --check rejected this patch. Local files and checkpoint are unchanged.",
+      );
+    await store.update(id, (v) => ({
+      ...v,
+      pendingApply: { artifact, digest: expectedDigest },
+    }));
+    destination(r);
+    for (const p of candidate.changedPaths)
+      assertSafeParents(r.localRoot, p, { allowMissing: true });
+    const applied = git(r.localRoot, args, {
+      input: candidate.patch,
+      check: false,
+    });
+    if (applied.status !== 0) {
+      await store.update(id, (v) => ({ ...v, pendingApply: null }));
+      throw new PluginError(
+        "patch_conflict",
+        "git apply failed. Check the destination and retained review; checkpoint unchanged.",
+      );
+    }
+    if (!localMatches(r, candidate.after, candidate.changedPaths))
+      throw new PluginError(
+        "apply_recovery_required",
+        "Applied files do not match the reviewed result. Checkpoint unchanged; retained approval can be reconciled.",
+      );
+    await store.update(id, (v) => ({
+      ...v,
+      checkpoint: candidate.after.directory,
+      checkpointDigest: candidate.after.digest,
+      pendingApply: null,
+      lastAppliedArtifact: artifact,
+    }));
+    return { status: "applied", association: id, artifact };
+  });
+}

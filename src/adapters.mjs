@@ -41,6 +41,14 @@ export function installCommand(adapter) {
 }
 export function launchCommand(config) {
   const a = getAdapter(config.agent);
+  const login =
+    config.agent === "codex" &&
+    config.agentEnvAllowlist.includes("OPENAI_API_KEY")
+      ? 'if [ -n "${OPENAI_API_KEY:-}" ]; then printf \'%s\' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null || exit 1; fi; '
+      : "";
   // PTY creation starts a shell. Replace it exactly once; reattach never sends this again.
-  return `exec ${[a.binary, ...config.agentArgs].map(shellQuote).join(" ")}\n`;
+  const command = `${login}exec ${[a.binary, ...config.agentArgs].map(shellQuote).join(" ")}`;
+  return login
+    ? `exec bash --noprofile --norc -c ${shellQuote(command)}\n`
+    : `${command}\n`;
 }

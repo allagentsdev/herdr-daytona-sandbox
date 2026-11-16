@@ -3,7 +3,13 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { managementAuth, agentEnvironment } from "./config.mjs";
 import { getAdapter, installCommand } from "./adapters.mjs";
-import { readSnapshot } from "./manifest.mjs";
+import {
+  readSnapshot,
+  saveSnapshot,
+  pathExclusionReason,
+  digest,
+  contentExclusionReason,
+} from "./manifest.mjs";
 import { shellQuote } from "./process.mjs";
 import { PluginError, errorMessage } from "./result.mjs";
 
@@ -121,7 +127,7 @@ export class DaytonaProvider {
   async prepare(sandbox, record, snapshot, onPhase = () => {}) {
     const c = this.config,
       a = getAdapter(c.agent);
-    onPhase("Checking Linux tools");
+    await onPhase("checking", "Checking Linux tools");
     await this.exec(
       sandbox,
       'set -eu; test "$(uname -s)" = Linux; command -v bash; command -v git; command -v node; command -v npm; test "$(node -p \'Number(process.versions.node.split(".")[0])>=22\')" = true',
@@ -134,7 +140,7 @@ export class DaytonaProvider {
         "An interrupted setup is retained. Inspect the sandbox before starting a fresh association; reconnect never reuploads.",
       );
     await this.exec(sandbox, `mkdir -p ${shellQuote(c.remoteRoot)}`, "/");
-    onPhase("Uploading staged files");
+    await onPhase("uploading", "Uploading staged files");
     for (const f of snapshot.files) {
       const remote = path.posix.join(c.remoteRoot, f.path);
       await this.exec(
@@ -155,7 +161,7 @@ export class DaytonaProvider {
         }),
       );
     }
-    onPhase(`Installing ${a.kind}`);
+    await onPhase("preparing", `Installing ${a.kind}`);
     await this.exec(sandbox, installCommand(a), "/");
     const installedVersion = (
       await this.exec(sandbox, `${shellQuote(a.binary)} --version`, "/")
@@ -219,6 +225,119 @@ export class DaytonaProvider {
       return Buffer.concat(chunks);
     });
   }
+  async exportSnapshot(record, directory) {
+    const c = this.config,
+      sandbox = await this.get(record.sandboxId);
+    if (!sandbox || sandbox.state !== "started")
+      throw new PluginError(
+        "sandbox_not_running",
+        "Patch export requires a running sandbox. Reconnect first to resume; status never starts it.",
+      );
+    const tools = `/tmp/herdr-tools-${randomUUID()}`,
+      remote = `/tmp/herdr-export-${randomUUID()}`;
+    try {
+      await providerCall(() => sandbox.fs.createFolder(tools, "700"));
+      for (const name of [
+        "remote-files.mjs",
+        "manifest.mjs",
+        "process.mjs",
+        "config.mjs",
+        "constants.mjs",
+        "result.mjs",
+        "state.mjs",
+      ]) {
+        await providerCall(() =>
+          sandbox.fs.uploadFile(
+            Buffer.from(fs.readFileSync(new URL(`./${name}`, import.meta.url))),
+            `${tools}/${name}`,
+            c.execTimeoutSeconds,
+          ),
+        );
+      }
+      const policy = {
+        excludedPaths: c.excludedPaths,
+        maxFiles: c.maxFiles,
+        maxFileBytes: c.maxFileBytes,
+        maxUploadBytes: c.maxUploadBytes,
+      };
+      await this.exec(
+        sandbox,
+        `node ${shellQuote(`${tools}/remote-files.mjs`)} ${shellQuote(c.remoteRoot)} ${shellQuote(remote)} ${shellQuote(JSON.stringify(policy))}`,
+        "/",
+      );
+      const metadata = JSON.parse(
+        (
+          await this.download(
+            sandbox,
+            `${remote}/manifest.json`,
+            c.maxFiles * 8192 + 1024,
+          )
+        ).toString("utf8"),
+      );
+      if (!Array.isArray(metadata.files) || metadata.files.length > c.maxFiles)
+        throw new PluginError(
+          "remote_export",
+          "Invalid remote file inventory.",
+        );
+      let total = 0;
+      const names = new Set();
+      for (const f of metadata.files) {
+        if (
+          pathExclusionReason(f.path, c) ||
+          !["100644", "100755"].includes(f.mode) ||
+          !Number.isSafeInteger(f.size) ||
+          f.size < 0 ||
+          f.size > c.maxFileBytes ||
+          !/^[0-9]+$/.test(f.blob) ||
+          !/^[0-9a-f]{64}$/.test(f.sha256) ||
+          names.has(f.path)
+        )
+          throw new PluginError(
+            "remote_export",
+            "Unsafe remote inventory entry.",
+          );
+        names.add(f.path);
+        total += f.size;
+        if (total > c.maxUploadBytes)
+          throw new PluginError(
+            "download_limit",
+            "Remote export exceeds maxUploadBytes.",
+          );
+      }
+      const entries = [];
+      for (const f of metadata.files) {
+        const bytes = await this.download(
+          sandbox,
+          `${remote}/${f.blob}`,
+          f.size,
+        );
+        if (bytes.length !== f.size || digest(bytes) !== f.sha256)
+          throw new PluginError(
+            "remote_export_changed",
+            "Remote export changed during download.",
+          );
+        if (contentExclusionReason(bytes))
+          throw new PluginError(
+            "remote_export",
+            "A returned file contains a detected secret.",
+          );
+        entries.push({ path: f.path, mode: f.mode, bytes });
+      }
+      return saveSnapshot(
+        directory,
+        entries,
+        Array.isArray(metadata.excluded)
+          ? metadata.excluded.slice(0, c.maxFiles)
+          : [],
+      );
+    } finally {
+      await this.exec(
+        sandbox,
+        `rm -rf -- ${shellQuote(tools)} ${shellQuote(remote)}`,
+        "/",
+      ).catch(() => {});
+    }
+  }
 }
 export async function provision(store, id, provider, onPhase = () => {}) {
   return store.withLock(id, async () => {
@@ -264,7 +383,10 @@ export async function provision(store, id, provider, onPhase = () => {}) {
         sandbox,
         r,
         snapshot,
-        onPhase,
+        async (phase, message) => {
+          await store.update(id, (v) => ({ ...v, phase }));
+          onPhase(message);
+        },
       );
       return await store.update(id, (v) => ({
         ...v,

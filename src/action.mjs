@@ -12,6 +12,7 @@ try {
       artifact: { type: "string" },
       digest: { type: "string" },
       approve: { type: "boolean" },
+      "export-only": { type: "boolean" },
       "confirm-delete": { type: "string" },
     },
   });
@@ -20,6 +21,7 @@ try {
   const r = await runAction(action, {
     ...values,
     confirmDelete: values["confirm-delete"],
+    exportOnly: values["export-only"],
   });
   emitResult(action, r.status, r);
 } catch (e) {
